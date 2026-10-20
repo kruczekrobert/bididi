@@ -1,7 +1,6 @@
 package bdd
 
 import (
-	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -62,9 +61,7 @@ func (f *FeaturesContext) compareHTTPText(expected, actual string) error {
 	if resolved == nil {
 		return fmt.Errorf("HTTP table expectation %q resolved to null", expected)
 	}
-	expectedJSON, _ := json.Marshal(fmt.Sprint(resolved))
-	actualJSON, _ := json.Marshal(actual)
-	return f.jsonComparator.CompareJSON(string(expectedJSON), string(actualJSON))
+	return f.jsonComparator.compareValues(fmt.Sprint(resolved), actual, "")
 }
 
 func (f *FeaturesContext) compareHTTPStatus(expected string, actual int) error {
@@ -79,6 +76,5 @@ func (f *FeaturesContext) compareHTTPStatus(expected string, actual int) error {
 		}
 		return nil
 	}
-	expectedJSON, _ := json.Marshal(value)
-	return f.jsonComparator.CompareJSON(string(expectedJSON), strconv.Itoa(actual))
+	return f.jsonComparator.compareValues(value, float64(actual), "")
 }
