@@ -18,6 +18,8 @@ func newFeaturesContext() *FeaturesContext {
 	wildcardProcessor := NewWildcardProcessor()
 	return &FeaturesContext{
 		mockRegistry:      make(map[string]*MockConfig),
+		messageObservers:  make(map[string]MessageObserver),
+		observedMessages:  make(map[string][]observedMessage),
 		wildcardProcessor: wildcardProcessor,
 		jsonComparator:    NewJSONComparator(wildcardProcessor),
 	}
@@ -39,6 +41,10 @@ func (f *FeaturesContext) RegisterRedis(redis RedisClient) {
 	f.redis = redis
 }
 
+func (f *FeaturesContext) RegisterMessageBus(bus MessageBus) {
+	f.messageBus = bus
+}
+
 func (f *FeaturesContext) RegisterWildcard(pattern string, handler WildcardHandler) error {
 	return f.wildcardProcessor.RegisterWildcard(pattern, handler)
 }
@@ -51,6 +57,7 @@ func (f *FeaturesContext) MockURL() string {
 }
 
 func (f *FeaturesContext) Close() {
+	_ = f.closeMessageObservers()
 	f.mockServerStop()
 }
 
@@ -61,12 +68,18 @@ type FeaturesContext struct {
 	apiResponse       *httptest.ResponseRecorder
 	db                Database
 	redis             RedisClient
+	messageBus        MessageBus
+	messageObservers  map[string]MessageObserver
+	observedMessages  map[string][]observedMessage
 	mockRegistry      map[string]*MockConfig
 	wildcardProcessor *WildcardProcessor
 	jsonComparator    *JSONComparator
 }
 
 func (f *FeaturesContext) clear(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+	if err := f.closeMessageObservers(); err != nil {
+		return ctx, err
+	}
 	f.apiApp = nil
 	f.apiResponse = nil
 	f.mockRegistry = make(map[string]*MockConfig)
@@ -76,6 +89,7 @@ func (f *FeaturesContext) clear(ctx context.Context, _ *godog.Scenario) (context
 
 func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Before(f.clear)
+	ctx.After(f.afterScenario)
 
 	// sql
 	ctx.Step(`^add "([^"]*)" records$`, f.addRecords)
@@ -118,6 +132,11 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^set redis key "([^"]*)" to JSON$`, f.setRedisJSONValue)
 	ctx.Step(`^set redis key "([^"]*)" with TTL "([^"]*)" to$`, f.setRedisValueWithTTL)
 	ctx.Step(`^set redis key "([^"]*)" with TTL "([^"]*)" to JSON$`, f.setRedisJSONValueWithTTL)
+
+	// Message bus steps
+	ctx.Step(`^observe messages from "([^"]*)"$`, f.observeMessages)
+	ctx.Step(`^publish JSON message to "([^"]*)"$`, f.publishJSONMessage)
+	ctx.Step(`^within "([^"]*)" messages from "([^"]*)" contain JSON$`, f.assertMessages)
 }
 
 func (f *FeaturesContext) mockServerStart() {

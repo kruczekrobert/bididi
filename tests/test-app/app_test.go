@@ -102,6 +102,11 @@ func TestFeature(t *testing.T) {
 		ttlByKey: make(map[string]time.Duration),
 	}
 	features.RegisterRedis(cache)
+	bus := newMemoryMessageBus()
+	bus.handlers["orders.commands"] = func(ctx context.Context, data []byte) error {
+		return testapp.ProcessOrderCommand(ctx, data, bus.Publish)
+	}
+	features.RegisterMessageBus(bus)
 	if err := features.RegisterWildcard(`\$TEST_VALUE\$`, testWildcard{}); err != nil {
 		t.Fatal(err)
 	}

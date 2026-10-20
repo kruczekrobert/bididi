@@ -2,8 +2,11 @@ package testapp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/fx"
@@ -103,4 +106,32 @@ func NewRouter(service Service, mockURL string) *gin.Engine {
 	})
 
 	return router
+}
+
+func ProcessOrderCommand(ctx context.Context, data []byte, publish func(context.Context, string, []byte) error) error {
+	var command struct {
+		OrderID string `json:"order_id"`
+	}
+	if err := json.Unmarshal(data, &command); err != nil {
+		return fmt.Errorf("decode order command: %w", err)
+	}
+	if command.OrderID == "" {
+		return fmt.Errorf("order command requires order_id")
+	}
+	for _, eventType := range []string{"OrderCreated", "InvoiceRequested"} {
+		event := map[string]string{
+			"type":       eventType,
+			"order_id":   command.OrderID,
+			"created_at": time.Now().UTC().Format(time.RFC3339Nano),
+			"source":     "test-app",
+		}
+		message, err := json.Marshal(event)
+		if err != nil {
+			return fmt.Errorf("encode %s event: %w", eventType, err)
+		}
+		if err := publish(ctx, "orders.events", message); err != nil {
+			return fmt.Errorf("publish %s event: %w", eventType, err)
+		}
+	}
+	return nil
 }
