@@ -4,20 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"github.com/cucumber/godog"
+	"net/url"
 )
 
 type MockExpectation struct {
-	Payload map[string]interface{} `json:"payload,omitempty"`
-	Headers map[string]string      `json:"headers,omitempty"`
+	Payload         map[string]interface{} `json:"payload,omitempty"`
+	Headers         map[string]string      `json:"headers,omitempty"`
+	Query           url.Values             `json:"query,omitempty"`
+	ResponseHeaders map[string]string      `json:"response_headers,omitempty"`
 }
 
 type MockCall struct {
-	Method   string                 `json:"method"`
-	Path     string                 `json:"path"`
-	Headers  map[string]string      `json:"headers"`
-	Payload  map[string]interface{} `json:"payload"`
-	CalledAt string                 `json:"called_at"`
+	Method          string                 `json:"method"`
+	Path            string                 `json:"path"`
+	Query           url.Values             `json:"query"`
+	Headers         map[string]string      `json:"headers"`
+	ResponseHeaders map[string]string      `json:"response_headers"`
+	Payload         map[string]interface{} `json:"payload"`
+	CalledAt        string                 `json:"called_at"`
 }
 
 type MockResponse struct {
@@ -35,14 +39,7 @@ type MockConfig struct {
 	CallHistory []MockCall             `json:"call_history,omitempty"`
 }
 
-func (f *FeaturesContext) jsonMock(name string, data *godog.DocString) error {
-	if data == nil {
-		return fmt.Errorf("mock %q requires a JSON doc string", name)
-	}
-	var mockConfig MockConfig
-	if err := json.Unmarshal([]byte(data.Content), &mockConfig); err != nil {
-		return fmt.Errorf("[18294294] error unmarshalling mock data: %v", err)
-	}
+func (f *FeaturesContext) registerMockConfig(name string, mockConfig MockConfig) error {
 	if mockConfig.Method == "" || mockConfig.Path == "" {
 		return fmt.Errorf("mock %q requires method and path", name)
 	}
@@ -133,28 +130,14 @@ func (f *FeaturesContext) jsonMockWasNotCalled(name string) error {
 	return nil
 }
 
-func (f *FeaturesContext) mockWasCalledWith(name string, expectedData *godog.DocString) error {
-	if expectedData == nil {
-		return fmt.Errorf("mock %q call assertion requires a JSON doc string", name)
-	}
+func (f *FeaturesContext) assertMockCall(name string, expected MockExpectation, expectedText string) error {
 	mock, ok := f.mockRegistry[name]
 	if !ok {
 		return fmt.Errorf("mock '%s' not found in registry", name)
 	}
-
-	if !mock.Called {
-		return fmt.Errorf("mock '%s' was not called", name)
-	}
-
-	if len(mock.CallHistory) == 0 {
+	if !mock.Called || len(mock.CallHistory) == 0 {
 		return fmt.Errorf("mock '%s' has no call history", name)
 	}
-
-	var expected MockExpectation
-	if err := json.Unmarshal([]byte(expectedData.Content), &expected); err != nil {
-		return fmt.Errorf("failed to parse expected data: %v", err)
-	}
-
 	var mismatches []string
 	for i, call := range mock.CallHistory {
 		matches, err := f.matchesMockCall(expected, call)
@@ -168,13 +151,15 @@ func (f *FeaturesContext) mockWasCalledWith(name string, expectedData *godog.Doc
 	}
 
 	errorMsg := fmt.Sprintf("❌ No matching call found for mock '%s'\n", name)
-	errorMsg += fmt.Sprintf("🎯 Expected:\n%s\n\n", f.jsonComparator.formatJSON(string(expectedData.Content), "🎯"))
+	errorMsg += fmt.Sprintf("🎯 Expected:\n%s\n\n", f.jsonComparator.formatJSON(expectedText, "🎯"))
 	errorMsg += fmt.Sprintf("📞 Actual calls (%d total):\n", len(mock.CallHistory))
 
 	for i, call := range mock.CallHistory {
 		callJSON, _ := json.Marshal(MockExpectation{
-			Payload: call.Payload,
-			Headers: call.Headers,
+			Payload:         call.Payload,
+			Headers:         call.Headers,
+			Query:           call.Query,
+			ResponseHeaders: call.ResponseHeaders,
 		})
 		errorMsg += fmt.Sprintf("   Call #%d:\n%s\n", i+1, f.jsonComparator.formatJSON(string(callJSON), "📞"))
 	}
@@ -205,16 +190,28 @@ func (f *FeaturesContext) matchesMockCall(expected MockExpectation, call MockCal
 		if !ok {
 			return false, fmt.Errorf("missing header %q", key)
 		}
-		expectedJSON, err := json.Marshal(expectedValue)
-		if err != nil {
-			return false, fmt.Errorf("failed to marshal expected header %q: %w", key, err)
-		}
-		actualJSON, err := json.Marshal(actualValue)
-		if err != nil {
-			return false, fmt.Errorf("failed to marshal actual header %q: %w", key, err)
-		}
-		if err := f.jsonComparator.CompareJSON(string(expectedJSON), string(actualJSON)); err != nil {
+		if err := f.compareHTTPText(expectedValue, actualValue); err != nil {
 			return false, fmt.Errorf("header %q: %w", key, err)
+		}
+	}
+	for key, values := range expected.Query {
+		actualValues := call.Query[key]
+		if len(actualValues) < len(values) {
+			return false, fmt.Errorf("missing query value for %q", key)
+		}
+		for i, value := range values {
+			if err := f.compareHTTPText(value, actualValues[i]); err != nil {
+				return false, fmt.Errorf("query %q: %w", key, err)
+			}
+		}
+	}
+	for key, expectedValue := range expected.ResponseHeaders {
+		actualValue, ok := call.ResponseHeaders[http.CanonicalHeaderKey(key)]
+		if !ok {
+			return false, fmt.Errorf("missing response header %q", key)
+		}
+		if err := f.compareHTTPText(expectedValue, actualValue); err != nil {
+			return false, fmt.Errorf("response header %q: %w", key, err)
 		}
 	}
 

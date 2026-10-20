@@ -1,6 +1,7 @@
 package bdd
 
 import (
+	"github.com/cucumber/godog"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -43,4 +44,14 @@ func TestCheckVariable(t *testing.T) {
 	assert.NoError(t, f.checkVariable("test_string", "not equals", "$NULL$"))
 	f.wildcardProcessor.SetVariable("numeric_name", 42)
 	assert.Error(t, f.checkVariable("$VAR(numeric_name)$", "equals", "42"))
+}
+
+func TestCheckVariableJSON(t *testing.T) {
+	f := NewFeaturesContext(t)
+	f.wildcardProcessor.SetVariable("result", 42)
+	assert.NoError(t, f.checkVariableJSON("result", &godog.DocString{Content: "42"}))
+	assert.Error(t, f.checkVariableJSON("result", &godog.DocString{Content: `"42"`}))
+
+	f.wildcardProcessor.SetVariable("item", map[string]interface{}{"id": 1, "name": "Ada"})
+	assert.NoError(t, f.checkVariableJSON("item", &godog.DocString{Content: `{"id":1,"name":"Ada"}`}))
 }

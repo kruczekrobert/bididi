@@ -1,9 +1,12 @@
 package bdd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/cucumber/godog"
 )
 
 // Supports type prefixes: str:, int:, float:, bool:, auto: (default)
@@ -99,6 +102,29 @@ func (f *FeaturesContext) checkVariable(varName, op, expected string) error {
 	default:
 		return fmt.Errorf("unknown op %q", op)
 	}
+}
+
+func (f *FeaturesContext) checkVariableJSON(varName string, expected *godog.DocString) error {
+	resolved, err := f.wildcardProcessor.ResolveWildcards(varName)
+	if err != nil {
+		return fmt.Errorf("cannot resolve variable name: %w", err)
+	}
+	name, ok := resolved.(string)
+	if !ok {
+		return fmt.Errorf("variable name must resolve to a string, got %T", resolved)
+	}
+	actual, ok := f.wildcardProcessor.GetVariable(name)
+	if !ok {
+		return fmt.Errorf("cannot get actual variable from memory: %s", f.wildcardProcessor.GetVariablesDebugInfo())
+	}
+	actualJSON, err := json.Marshal(actual)
+	if err != nil {
+		return fmt.Errorf("cannot encode variable %q as JSON: %w", name, err)
+	}
+	if err := f.jsonComparator.CompareJSON(expected.Content, string(actualJSON)); err != nil {
+		return fmt.Errorf("variable %q: %w", name, err)
+	}
+	return nil
 }
 
 func (f *FeaturesContext) convertWithTypePrefix(value interface{}) interface{} {

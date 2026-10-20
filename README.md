@@ -69,10 +69,7 @@ Feature: Greeting API
   Scenario: Greet a person
     Given app is running
     When make a "GET" request to "/hello/Ada"
-      """
-      {}
-      """
-    Then have json response with status 200
+    Then have JSON response with status 200
       """
       {"message":"hello Ada"}
       """
@@ -104,10 +101,10 @@ Feature: Item lookup
   Scenario: An existing item is returned
     Given app is running
     When make a "GET" request to "/items/42"
+    Then have JSON response with status 200
       """
-      {}
+      {"id":"42","name":"Ada"}
       """
-    Then have response with status 200
 ```
 
 ### Background
@@ -121,9 +118,6 @@ Feature: Item lookup
 
   Scenario: Missing item
     When make a "GET" request to "/items/missing"
-      """
-      {}
-      """
     Then have response with status 404
 ```
 
@@ -135,10 +129,7 @@ An outline runs once per `Examples` row. Gherkin expands `<name>` first; bididi 
 Scenario Outline: Existing items
   Given app is running
   When make a "GET" request to "/items/<id>"
-    """
-    {}
-    """
-  Then have json response with status 200
+  Then have JSON response with status 200
     """
     {"id":"<id>","name":"<name>"}
     """
@@ -165,62 +156,82 @@ Given app is running
 
 Register an `http.Handler` with `features.RegisterApp(handler)` in Go before running the suite. The handler can come from Gin, `http.ServeMux`, or another router.
 
-### Make JSON Request
+### Make HTTP Request
 
 ```gherkin
-When make a "METHOD" request to "PATH"
+When make a "GET" request to "/items/42"
+```
+
+This sends a request without a body or metadata table. It also works for other methods, such as a POST without a body.
+
+Use `with metadata` for query parameters or request headers:
+
+```gherkin
+When make a "GET" request to "/query" with metadata
+  | type  | name | value |
+  | query | tag  | go    |
+```
+
+Use `with JSON` when sending a JSON body:
+
+```gherkin
+When make a "POST" request to "/echo" with JSON
   """
-  {"payload": {"name":"Ada"}, "headers": {"X-Trace":"trace-1"}}
+  {"name":"Ada"}
   """
 ```
 
-`payload` and `headers` are optional fields of the request doc string. `payload` is a JSON object. For an empty request, use `{}`. Paths, payload values, and header names and values can contain variables or generating wildcards.
-
-Payload only:
+To send both a JSON body and metadata:
 
 ```gherkin
-When make a "POST" request to "/echo"
+When make a "POST" request to "/echo" with JSON and metadata
+  | type   | name    | value           |
+  | query  | source  | checkout        |
+  | header | X-Trace | $VAR(trace_id)$ |
   """
-  {"payload":{"name":"Ada"}}
+  {"name":"Ada"}
   """
 ```
 
-Headers only:
+The metadata table uses columns `type`, `name`, and `value`. Repeat `query` rows for repeated parameters. The DocString is the request JSON object itself. Method, path, table names and values support variables and generating wildcards.
+
+### Assert HTTP Response
 
 ```gherkin
-When make a "GET" request to "/headers"
+Then have response with status 404
+```
+
+This checks only the status. To compare a JSON body as well:
+
+```gherkin
+Then have JSON response with status 200
   """
-  {"headers":{"X-Trace":"$VAR(trace_id)$"}}
+  {"id":"42","name":"Ada"}
   """
 ```
 
-Payload and headers:
+The status supports variables and comparison wildcards. The DocString compares the entire JSON body with the existing variable, wildcard, and unordered-array rules.
+
+To check response headers as well, use the table variant:
 
 ```gherkin
-When make a "POST" request to "/echo"
-  """
-  {"payload":{"count":"$VAR(count)$"},"headers":{"X-Trace":"trace-$UUID$"}}
-  """
-```
-
-### Assert Response Status
-
-```gherkin
-Then have response with status 200
-```
-
-Checks the HTTP status. Use an unquoted number.
-
-### Assert JSON Response
-
-```gherkin
-Then have json response with status 200
+Then have JSON response with status 200 with metadata
+  | type   | name         | value                           |
+  | header | Content-Type | application/json; charset=utf-8 |
   """
   {"id":"42","name":"$ANY_STR_FULL$"}
   """
 ```
 
-Checks both status and the entire JSON body. Object keys must match exactly; arrays are compared without relying on order. Expected JSON supports variables, typed wildcards, UUIDs, times, and custom matchers. See [HTTP scenarios](tests/test-app/features/http_steps.feature) for these cases.
+The table checks only the listed response headers.
+
+To require an empty response body:
+
+```gherkin
+Then have empty response with status 204
+```
+
+See [HTTP scenarios](tests/test-app/features/http_steps.feature) for query parameters, headers, variables, wildcards, and outlines.
 
 ## 🗄️ Database Steps
 
@@ -276,7 +287,7 @@ And extract from database "SELECT name FROM step_items WHERE id = 1" as "name"
 
 The query must return one row. A single column stores its value; multiple columns store a map. Prefix the variable name with `str:`, `int:`, `float:`, `bool:`, or `auto:` to convert it.
 
-See [database scenarios](tests/test-app/features/db_steps.feature) for values, types, tables, SQL, extraction, and outlines.
+See [database scenarios](tests/test-app/features/db_steps.feature) for tables, SQL, extraction, value types, and outlines.
 
 ## 🎭 Mock Service Steps
 
@@ -285,19 +296,17 @@ Call `features.MockURL()` in the Go test and pass the URL to the application und
 ### Define JSON Mock
 
 ```gherkin
-Given json mock "notification"
+Given json mock "notification" for "POST" request to "events"
+  | type            | name   | value     |
+  | query           | source | checkout  |
+  | status          |        | 200       |
+  | response-header | X-Mock | from-mock |
   """
-  {
-    "method": "POST",
-    "path": "events",
-    "status": 200,
-    "response": {"accepted": true},
-    "headers": {"X-Mock": "from-mock"}
-  }
+  {"accepted":true}
   """
 ```
 
-`method`, `path`, and a valid HTTP `status` are required. `headers` sets response headers. Variables and generating wildcards work in the path, response, and response headers.
+Method and path identify the mock in the step text. A valid HTTP `status` is required in the table. `query` selects which incoming request the mock handles. `response-header` sets a header returned by the mock. The DocString is the JSON response body. Variables and generating wildcards work in the step text, table, and body.
 
 ### Verify Mock Was Called
 
@@ -317,15 +326,16 @@ Declare `unused` first; assertions refer to named mocks already in the registry.
 
 ```gherkin
 Then json mock "notification" was called with
+  | type            | name         | value            |
+  | query           | source       | checkout         |
+  | header          | Content-Type | application/json |
+  | response-header | X-Mock       | from-mock        |
   """
-  {
-    "payload": {"id":"42","name":"Ada"},
-    "headers": {"Content-Type":"application/json"}
-  }
+  {"id":"42","name":"Ada"}
   """
 ```
 
-The assertion succeeds if any recorded call matches the supplied payload and headers. Both fields are optional; JSON comparison supports variables and wildcards. See [mock scenarios](tests/test-app/features/mock_steps.feature) for multiple mocks and response headers.
+`header` checks a header received by the mock. `response-header` checks a header sent by the mock. The assertion succeeds if any recorded call matches the listed query parameters, headers, and optional JSON request body. Variables and comparison wildcards work in assertions. For a table-only assertion, use `Then json mock "notification" was called with metadata`. See [mock scenarios](tests/test-app/features/mock_steps.feature).
 
 ## 🧮 Variable Handling Steps
 
@@ -353,6 +363,17 @@ Then variable "name" not equals "Bob"
 Then variable "name" contains "Ad"
 Then variable "name" not contains "Bo"
 ```
+
+For a type-sensitive comparison, including a value extracted from the database, use JSON:
+
+```gherkin
+Then variable "result" equals JSON
+  """
+  42
+  """
+```
+
+This distinguishes the number `42` from the string `"42"` and also compares objects and arrays.
 
 `$VAR(name)$` can appear in later step text, tables, doc strings, mock definitions, and outline examples. `$NULL$` can be compared with `equals` and `not equals`. See [variable scenarios](tests/test-app/features/variable_steps.feature).
 
@@ -493,21 +514,22 @@ Feature: Item notification
       """
       {"id":"$VAR(item_id)$","name":"Ada"}
       """
-    And json mock "notification"
+    And json mock "notification" for "POST" request to "events"
+      | type   | name | value |
+      | status |      | 200    |
       """
-      {"method":"POST","path":"events","status":200,"response":{"accepted":true}}
+      {"accepted":true}
       """
     When make a "POST" request to "/items/$VAR(item_id)$/notify"
-      """
-      {}
-      """
-    Then have json response with status 200
+    Then have JSON response with status 200
       """
       {"item":{"id":"42","name":"Ada"},"notification":{"accepted":true}}
       """
     And json mock "notification" was called with
+      | type   | name         | value            |
+      | header | Content-Type | application/json |
       """
-      {"payload":{"id":"42","name":"Ada"}}
+      {"id":"42","name":"Ada"}
       """
     And redis key "item:42" exists
     And have "step_items" records

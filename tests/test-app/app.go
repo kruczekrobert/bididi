@@ -25,7 +25,14 @@ type Service interface {
 func NewRouter(service Service, mockURL string) *gin.Engine {
 	router := gin.New()
 	router.GET("/headers", func(c *gin.Context) {
+		c.Header("X-Trace", c.GetHeader("X-Trace"))
 		c.JSON(http.StatusOK, gin.H{"trace": c.GetHeader("X-Trace")})
+	})
+	router.GET("/query", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"tags": c.QueryArray("tag")})
+	})
+	router.GET("/empty", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
 	})
 
 	router.POST("/echo", func(c *gin.Context) {
@@ -65,6 +72,11 @@ func NewRouter(service Service, mockURL string) *gin.Engine {
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "cannot create notification"})
 			return
+		}
+		if source := c.Query("source"); source != "" {
+			query := request.URL.Query()
+			query.Set("source", source)
+			request.URL.RawQuery = query.Encode()
 		}
 		request.Header.Set("Content-Type", "application/json")
 

@@ -109,30 +109,20 @@ Feature: Basic database steps
     Given add "step_items" records
       | id | name |
       | 1  | Ada  |
-    And app is running
     When extract from database "SELECT id, name FROM step_items WHERE id = 1" as "item"
-    And make a "POST" request to "/echo"
+    Then variable "item" equals JSON
       """
-      {"payload":{"item":"$VAR(item)$"}}
-      """
-    Then have json response with status 200
-      """
-      {"payload":{"item":{"id":1,"name":"Ada"}},"trace":""}
+      {"id":1,"name":"Ada"}
       """
 
   Scenario Outline: Extract a database value with a type prefix
     Given add "step_items" records
       | id | name | amount |
       | 1  | Ada  | 3.5    |
-    And app is running
     When extract from database "<query>" as "<prefix>result"
-    And make a "POST" request to "/echo"
+    Then variable "result" equals JSON
       """
-      {"payload":{"value":"$VAR(result)$"}}
-      """
-    Then have json response with status 200
-      """
-      {"payload":{"value":<expected>},"trace":""}
+      <expected>
       """
 
     Examples:
@@ -174,18 +164,13 @@ Feature: Basic database steps
     Given add "step_items" records
       | id | name | token  |
       | 1  | Ada  | $UUID$ |
+    When extract from database "SELECT token FROM step_items WHERE id = 1" as "token"
     Then have "step_items" records
       | id | token  |
       | 1  | $UUID$ |
-    And extract from database "SELECT token FROM step_items WHERE id = 1" as "token"
-    And app is running
-    When make a "POST" request to "/echo"
+    And variable "token" equals JSON
       """
-      {"payload":{"token":"$VAR(token)$"}}
-      """
-    Then have json response with status 200
-      """
-      {"payload":{"token":"$UUID$"},"trace":""}
+      "$UUID$"
       """
 
   Scenario Outline: Generate and compare time wildcards in a data table

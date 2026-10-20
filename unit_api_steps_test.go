@@ -3,178 +3,87 @@ package bdd
 import (
 	"encoding/json"
 	"net/http"
-	"github.com/cucumber/godog"
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/cucumber/godog"
+	messages "github.com/cucumber/messages/go/v34"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestMakeJsonRequestWithHeaders(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	})
-
-	f := &FeaturesContext{
-		mockRegistry:      make(map[string]*MockConfig),
-		wildcardProcessor: NewWildcardProcessor(),
-		jsonComparator:    NewJSONComparator(NewWildcardProcessor()),
-		apiApp:            handler,
+func httpTestTable(rows ...[]string) *godog.Table {
+	table := &godog.Table{}
+	for _, row := range rows {
+		cells := make([]*messages.PickleTableCell, 0, len(row))
+		for _, value := range row {
+			cells = append(cells, &messages.PickleTableCell{Value: value})
+		}
+		table.Rows = append(table.Rows, &messages.PickleTableRow{Cells: cells})
 	}
-
-	t.Run("PayloadWithHeaders", func(t *testing.T) {
-		docString := &godog.DocString{
-			Content: `{
-				"payload": {"name": "John", "age": 30},
-				"headers": {"Authorization": "Bearer token123", "X-Custom": "value"}
-			}`,
-		}
-
-		err := f.makeJsonRequest("POST", "/test", docString)
-
-		assert.NoError(t, err)
-	})
-
-	t.Run("HeadersOnly", func(t *testing.T) {
-		docString := &godog.DocString{
-			Content: `{
-				"headers": {"Authorization": "Bearer token123", "X-Custom": "value"}
-			}`,
-		}
-
-		err := f.makeJsonRequest("GET", "/test", docString)
-
-		assert.NoError(t, err)
-	})
-
-	t.Run("PayloadOnly", func(t *testing.T) {
-		docString := &godog.DocString{
-			Content: `{
-				"payload": {"name": "John", "age": 30}
-			}`,
-		}
-
-		err := f.makeJsonRequest("POST", "/test", docString)
-
-		assert.NoError(t, err)
-	})
-
-	t.Run("EmptyRequest", func(t *testing.T) {
-		docString := &godog.DocString{
-			Content: `{}`,
-		}
-
-		err := f.makeJsonRequest("GET", "/test", docString)
-
-		assert.NoError(t, err)
-	})
-
-	t.Run("HeadersWithWildcards", func(t *testing.T) {
-		f.wildcardProcessor.SetVariable("token", "test-token-123")
-
-		docString := &godog.DocString{
-			Content: `{
-				"headers": {"Authorization": "Bearer $VAR(token)$", "X-Custom": "value"}
-			}`,
-		}
-
-		err := f.makeJsonRequest("GET", "/test", docString)
-
-		assert.NoError(t, err)
-	})
+	return table
 }
 
-func TestRequestDataUnmarshaling(t *testing.T) {
-	t.Run("UnmarshalRequestData", func(t *testing.T) {
-		jsonData := `{
-			"payload": {"name": "John", "age": 30},
-			"headers": {"Authorization": "Bearer token123"}
-		}`
-
-		var wrappedPayload requestData
-		err := json.Unmarshal([]byte(jsonData), &wrappedPayload)
-
-		assert.NoError(t, err)
-		assert.NotNil(t, wrappedPayload.Payload)
-		assert.NotNil(t, wrappedPayload.Headers)
-		assert.Equal(t, "John", wrappedPayload.Payload["name"])
-		assert.Equal(t, "Bearer token123", wrappedPayload.Headers["Authorization"])
+func TestHTTPRequestAndResponseTables(t *testing.T) {
+	f := New()
+	f.wildcardProcessor.SetVariable("trace", "trace-42")
+	f.apiApp = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/echo", r.URL.Path)
+		assert.Equal(t, []string{"go", "bdd"}, r.URL.Query()["tag"])
+		assert.Equal(t, "trace-42", r.Header.Get("X-Trace"))
+		var body map[string]interface{}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		assert.Equal(t, "Ada", body["name"])
+		w.Header().Set("X-Trace", "trace-42")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"42"}`))
 	})
 
-	t.Run("UnmarshalPayloadOnly", func(t *testing.T) {
-		jsonData := `{
-			"payload": {"name": "John", "age": 30}
-		}`
+	request := httpTestTable(
+		[]string{"type", "name", "value"},
+		[]string{"query", "tag", "go"},
+		[]string{"query", "tag", "bdd"},
+		[]string{"header", "X-Trace", "$VAR(trace)$"},
+	)
+	require.NoError(t, f.makeHTTPRequestWithBodyAndMetadata("POST", "/echo", request, &godog.DocString{Content: `{"name":"Ada"}`}))
 
-		var wrappedPayload requestData
-		err := json.Unmarshal([]byte(jsonData), &wrappedPayload)
-
-		assert.NoError(t, err)
-		assert.NotNil(t, wrappedPayload.Payload)
-		assert.Nil(t, wrappedPayload.Headers)
-		assert.Equal(t, "John", wrappedPayload.Payload["name"])
-	})
-
-	t.Run("UnmarshalHeadersOnly", func(t *testing.T) {
-		jsonData := `{
-			"headers": {"Authorization": "Bearer token123"}
-		}`
-
-		var wrappedPayload requestData
-		err := json.Unmarshal([]byte(jsonData), &wrappedPayload)
-
-		assert.NoError(t, err)
-		assert.Nil(t, wrappedPayload.Payload)
-		assert.NotNil(t, wrappedPayload.Headers)
-		assert.Equal(t, "Bearer token123", wrappedPayload.Headers["Authorization"])
-	})
-
-	t.Run("UnmarshalEmpty", func(t *testing.T) {
-		jsonData := `{}`
-
-		var wrappedPayload requestData
-		err := json.Unmarshal([]byte(jsonData), &wrappedPayload)
-
-		assert.NoError(t, err)
-		assert.Nil(t, wrappedPayload.Payload)
-		assert.Nil(t, wrappedPayload.Headers)
-	})
+	response := httpTestTable(
+		[]string{"type", "name", "value"},
+		[]string{"header", "X-Trace", "$VAR(trace)$"},
+	)
+	require.NoError(t, f.assertHTTPResponseWithHeaders("201", response, &godog.DocString{Content: `{"id":"$ANY_STR_FULL$"}`}))
 }
 
-func TestProcessHeaderWildcards(t *testing.T) {
-	processor := NewWildcardProcessor()
-	processor.SetVariable("user_id", "user-123")
-	processor.SetVariable("api_key", "secret-key")
+func TestHTTPRequestWithoutBody(t *testing.T) {
+	f := New()
+	f.apiApp = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/items/42", r.URL.Path)
+		assert.Equal(t, int64(0), r.ContentLength)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	require.NoError(t, f.makeHTTPRequestWithoutBody("GET", "/items/42"))
+	require.NoError(t, f.assertResponseStatus("204"))
+	require.NoError(t, f.assertEmptyHTTPResponse("204"))
+	_, _ = f.apiResponse.Body.WriteString("unexpected")
+	require.NoError(t, f.assertResponseStatus("204"))
+	require.ErrorContains(t, f.assertEmptyHTTPResponse("204"), "expected empty body")
+}
 
-	f := &FeaturesContext{
-		wildcardProcessor: processor,
+func TestHTTPTableValidation(t *testing.T) {
+	f := New()
+	f.apiApp = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	for _, test := range []struct {
+		name  string
+		table *godog.Table
+	}{
+		{"wrong columns", httpTestTable([]string{"field", "name", "value"})},
+		{"unknown type", httpTestTable([]string{"type", "name", "value"}, []string{"cookie", "id", "42"})},
+		{"method in table", httpTestTable([]string{"type", "name", "value"}, []string{"method", "", "GET"})},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Error(t, f.makeHTTPRequestWithoutBodyAndMetadata("GET", "/echo", test.table))
+		})
 	}
-
-	t.Run("ProcessWildcardsInHeaders", func(t *testing.T) {
-		headers := map[string]string{
-			"Authorization": "Bearer $VAR(api_key)$",
-			"X-User-ID":     "$VAR(user_id)$",
-			"X-Static":      "static-value",
-		}
-
-		processedHeaders, err := f.processHeaderWildcards(headers)
-		assert.NoError(t, err)
-
-		assert.Equal(t, "Bearer secret-key", processedHeaders["Authorization"])
-		assert.Equal(t, "user-123", processedHeaders["X-User-ID"])
-		assert.Equal(t, "static-value", processedHeaders["X-Static"])
-	})
-
-	t.Run("ProcessNilHeaders", func(t *testing.T) {
-		processedHeaders, err := f.processHeaderWildcards(nil)
-		assert.NoError(t, err)
-		assert.Nil(t, processedHeaders)
-	})
-
-	t.Run("ProcessEmptyHeaders", func(t *testing.T) {
-		headers := map[string]string{}
-		processedHeaders, err := f.processHeaderWildcards(headers)
-		assert.NoError(t, err)
-		assert.Empty(t, processedHeaders)
-	})
+	require.Error(t, f.makeHTTPRequestWithoutBody("GET", "/echo?tag=go"))
 }

@@ -3,13 +3,11 @@ package bdd
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
@@ -91,18 +89,25 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^extract "([^"]*)" from response as "([^"]*)"$`, f.extractVariableFromResponse)
 	ctx.Step(`^extract from database "([^"]*)" as "([^"]*)"$`, f.extractVariableFromDatabase)
 	ctx.Step(`^variable "([^"]*)" (equals|not equals|contains|not contains) "([^"]*)"$`, f.checkVariable)
+	ctx.Step(`^variable "([^"]*)" equals JSON$`, f.checkVariableJSON)
 
 	// HTTP request steps
 	ctx.Step(`^app is running$`, f.appIsRunning)
-	ctx.Step(`^make a "([^"]*)" request to "([^"]*)"$`, f.makeJsonRequest)
-	ctx.Step(`^have response with status (\d+)$`, f.assertResponseStatus)
-	ctx.Step(`^have json response with status (\d+)$`, f.assertJsonResponse)
+	ctx.Step(`^make a "([^"]*)" request to "([^"]*)"$`, f.makeHTTPRequestWithoutBody)
+	ctx.Step(`^make a "([^"]*)" request to "([^"]*)" with metadata$`, f.makeHTTPRequestWithoutBodyAndMetadata)
+	ctx.Step(`^make a "([^"]*)" request to "([^"]*)" with JSON$`, f.makeHTTPRequestWithBody)
+	ctx.Step(`^make a "([^"]*)" request to "([^"]*)" with JSON and metadata$`, f.makeHTTPRequestWithBodyAndMetadata)
+	ctx.Step(`^have response with status ([^ ]+)$`, f.assertResponseStatus)
+	ctx.Step(`^have JSON response with status ([^ ]+)$`, f.assertHTTPResponseWithBody)
+	ctx.Step(`^have JSON response with status ([^ ]+) with metadata$`, f.assertHTTPResponseWithHeaders)
+	ctx.Step(`^have empty response with status ([^ ]+)$`, f.assertEmptyHTTPResponse)
 
 	// Mock steps
-	ctx.Step(`^json mock "([^"]*)"$`, f.jsonMock)
+	ctx.Step(`^json mock "([^"]*)" for "([^"]*)" request to "([^"]*)"$`, f.jsonMockFromTable)
 	ctx.Step(`^json mock "([^"]*)" was called$`, f.jsonMockWasCalled)
 	ctx.Step(`^json mock "([^"]*)" was not called$`, f.jsonMockWasNotCalled)
-	ctx.Step(`^json mock "([^"]*)" was called with$`, f.mockWasCalledWith)
+	ctx.Step(`^json mock "([^"]*)" was called with$`, f.mockWasCalledWithTable)
+	ctx.Step(`^json mock "([^"]*)" was called with metadata$`, f.mockWasCalledWithTableWithoutBody)
 
 	// Redis steps
 	ctx.Step(`^redis key "([^"]*)" exists$`, f.assertRedisKeyExists)
@@ -156,17 +161,23 @@ func (f *FeaturesContext) handleMockRequest(w http.ResponseWriter, r *http.Reque
 				call := MockCall{
 					Method:   method,
 					Path:     fullURL,
+					Query:    r.URL.Query(),
 					Headers:  headers,
 					Payload:  payload,
 					CalledAt: time.Now().Format(time.RFC3339),
 				}
-				mock.CallHistory = append(mock.CallHistory, call)
-
 				mock.Called = true
 				for key, value := range mock.Headers {
 					w.Header().Set(key, value)
 				}
 				writeMockJSON(w, mock.Status, mock.Response)
+				call.ResponseHeaders = make(map[string]string)
+				for key, values := range w.Header() {
+				if len(values) > 0 {
+					call.ResponseHeaders[key] = values[0]
+				}
+				}
+				mock.CallHistory = append(mock.CallHistory, call)
 				return
 			}
 		}
@@ -184,17 +195,10 @@ func writeMockJSON(w http.ResponseWriter, status int, value interface{}) {
 }
 
 func (f *FeaturesContext) buildNormalizedURL(path string, query url.Values) string {
-	queryParts := make([]string, 0, len(query))
-	for key, values := range query {
-		for _, value := range values {
-			queryParts = append(queryParts, fmt.Sprintf("%s=%s", key, value))
-		}
-	}
-	sort.Strings(queryParts)
-	if len(queryParts) == 0 {
+	if len(query) == 0 {
 		return path
 	}
-	return fmt.Sprintf("%s?%s", path, strings.Join(queryParts, "&"))
+	return path + "?" + query.Encode()
 }
 
 func (f *FeaturesContext) mockServerStop() {

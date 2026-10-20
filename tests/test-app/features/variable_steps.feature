@@ -5,11 +5,11 @@ Feature: Variable handling steps
 
   Scenario Outline: Set variable preserves the requested JSON type
     Given set variable "value" to "<input>"
-    When make a "POST" request to "/echo"
+    When make a "POST" request to "/echo" with JSON
       """
-      {"payload":{"value":"$VAR(value)$"}}
+      {"value":"$VAR(value)$"}
       """
-    Then have json response with status 200
+    Then have JSON response with status 200
       """
       {"payload":{"value":<expected>},"trace":""}
       """
@@ -41,12 +41,12 @@ Feature: Variable handling steps
     Then variable "copy" equals "Ada"
 
   Scenario: Variable values are escaped in JSON assertions
-    When make a "POST" request to "/echo"
+    When make a "POST" request to "/echo" with JSON
       """
-      {"payload":{"name":"Ada \"Lovelace\""}}
+      {"name":"Ada \"Lovelace\""}
       """
     And extract "payload.name" from response as "quoted"
-    Then have json response with status 200
+    Then have JSON response with status 200
       """
       {"payload":{"name":"$VAR(quoted)$"},"trace":""}
       """
@@ -71,16 +71,16 @@ Feature: Variable handling steps
     Then variable "name" not equals "$NULL$"
 
   Scenario Outline: Extract a response value with a type prefix
-    When make a "POST" request to "/echo"
+    When make a "POST" request to "/echo" with JSON
       """
-      {"payload":{"value":<source>}}
+      {"value":<source>}
       """
     And extract "payload.value" from response as "<prefix>result"
-    And make a "POST" request to "/echo"
+    And make a "POST" request to "/echo" with JSON
       """
-      {"payload":{"value":"$VAR(result)$"}}
+      {"value":"$VAR(result)$"}
       """
-    Then have json response with status 200
+    Then have JSON response with status 200
       """
       {"payload":{"value":<expected>},"trace":""}
       """
@@ -94,9 +94,9 @@ Feature: Variable handling steps
       | "42"   | auto:  | 42       |
 
   Scenario: Extract a value from an array in the response
-    When make a "POST" request to "/echo"
+    When make a "POST" request to "/echo" with JSON
       """
-      {"payload":{"items":[{"name":"Ada"}]}}
+      {"items":[{"name":"Ada"}]}
       """
     And extract "payload.items.0.name" from response as "name"
     Then variable "name" equals "Ada"

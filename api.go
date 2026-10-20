@@ -3,13 +3,10 @@ package bdd
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+
 	"github.com/cucumber/godog"
 )
-
-type requestData struct {
-	Payload map[string]interface{} `json:"payload"`
-	Headers map[string]string      `json:"headers"`
-}
 
 func (f *FeaturesContext) appIsRunning() error {
 	if f.app == nil {
@@ -19,109 +16,152 @@ func (f *FeaturesContext) appIsRunning() error {
 	return nil
 }
 
-func (f *FeaturesContext) processHeaderWildcards(headers map[string]string) (map[string]string, error) {
-	if headers == nil {
-		return nil, nil
-	}
-
-	processedHeaders := make(map[string]string)
-
-	for key, value := range headers {
-		processedKey, err := f.wildcardProcessor.SubstituteWildcards(key)
-		if err != nil {
-			return nil, fmt.Errorf("[147780] wildcard processing error for header key: %v", err)
-		}
-
-		processedValue, err := f.wildcardProcessor.SubstituteWildcards(value)
-		if err != nil {
-			return nil, fmt.Errorf("[147781] wildcard processing error for header value: %v", err)
-		}
-
-		stringKey, ok := processedKey.(string)
-		if !ok {
-			return nil, fmt.Errorf("[147782] expected string for header key, got %T", processedKey)
-		}
-
-		stringValue, ok := processedValue.(string)
-		if !ok {
-			return nil, fmt.Errorf("[147783] expected string for header value, got %T", processedValue)
-		}
-
-		processedHeaders[stringKey] = stringValue
-	}
-
-	return processedHeaders, nil
+func (f *FeaturesContext) makeHTTPRequestWithBody(method, path string, body *godog.DocString) error {
+	return f.makeHTTPRequest(method, path, nil, body)
 }
 
-func (f *FeaturesContext) makeJsonRequest(method, path string, data *godog.DocString) error {
+func (f *FeaturesContext) makeHTTPRequestWithBodyAndMetadata(method, path string, table *godog.Table, body *godog.DocString) error {
+	return f.makeHTTPRequest(method, path, table, body)
+}
+
+func (f *FeaturesContext) makeHTTPRequestWithoutBody(method, path string) error {
+	return f.makeHTTPRequest(method, path, nil, nil)
+}
+
+func (f *FeaturesContext) makeHTTPRequestWithoutBodyAndMetadata(method, path string, table *godog.Table) error {
+	return f.makeHTTPRequest(method, path, table, nil)
+}
+
+func (f *FeaturesContext) makeHTTPRequest(method, path string, table *godog.Table, body *godog.DocString) error {
 	if f.apiApp == nil {
 		return fmt.Errorf("[14538538] app is not running")
 	}
-	var wrappedPayload requestData
-
-	if data != nil {
-		err := json.Unmarshal([]byte(data.Content), &wrappedPayload)
-		if err != nil {
-			return fmt.Errorf("[147777] unmarshall error: %v", err)
-		}
-
-		if wrappedPayload.Payload != nil {
-			processedData, err := f.wildcardProcessor.SubstituteWildcards(wrappedPayload.Payload)
-			if err != nil {
-				return fmt.Errorf("[147778] wildcard processing error: %v", err)
-			}
-
-			var ok bool
-			wrappedPayload.Payload, ok = processedData.(map[string]interface{})
-			if !ok {
-				return fmt.Errorf("[147779] expected object, got %T", processedData)
-			}
-		}
-
-		wrappedPayload.Headers, err = f.processHeaderWildcards(wrappedPayload.Headers)
+	var rows []httpTableRow
+	var err error
+	if table != nil {
+		rows, err = parseHTTPTable(table, map[string]bool{"query": true, "header": true})
 		if err != nil {
 			return err
 		}
 	}
-
-	pathWithWildcards, err := f.wildcardProcessor.SubstituteWildcards(path)
+	headers := make(map[string]string)
+	query := make(url.Values)
+	for _, row := range rows {
+		switch row.typeName {
+		case "query":
+			var name, value string
+			name, err = f.resolveHTTPText(row.name)
+			if err == nil {
+				value, err = f.resolveHTTPText(row.value)
+			}
+			if err == nil {
+				query.Add(name, value)
+			}
+		case "header":
+			var name, value string
+			name, err = f.resolveHTTPText(row.name)
+			if err == nil {
+				value, err = f.resolveHTTPText(row.value)
+			}
+			if err == nil {
+				headers[name] = value
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("HTTP request %s: %w", row.typeName, err)
+		}
+	}
+	method, err = f.resolveHTTPText(method)
 	if err != nil {
-		return fmt.Errorf("[147778] wildcard processing error: %v", err)
+		return fmt.Errorf("HTTP request method: %w", err)
 	}
-
-	resolvedPath, ok := pathWithWildcards.(string)
-	if !ok {
-		return fmt.Errorf("[147784] expected string for request path, got %T", pathWithWildcards)
+	path, err = f.resolveHTTPText(path)
+	if err != nil {
+		return fmt.Errorf("HTTP request path: %w", err)
 	}
-	f.apiResponse, err = f.makeRequest(f.apiApp, method, resolvedPath, wrappedPayload.Payload, wrappedPayload.Headers)
+	if method == "" || path == "" {
+		return fmt.Errorf("HTTP request requires method and path")
+	}
+	requestURL, err := url.Parse(path)
+	if err != nil {
+		return fmt.Errorf("invalid HTTP request path: %w", err)
+	}
+	if requestURL.RawQuery != "" {
+		return fmt.Errorf("HTTP request path must not contain query parameters; use query rows")
+	}
+	requestURL.RawQuery = query.Encode()
 
+	var payload map[string]interface{}
+	if body != nil {
+		if err := json.Unmarshal([]byte(body.Content), &payload); err != nil {
+			return fmt.Errorf("invalid HTTP request JSON body: %w", err)
+		}
+		if payload == nil {
+			return fmt.Errorf("HTTP request requires a JSON object body")
+		}
+		processed, err := f.wildcardProcessor.SubstituteWildcards(payload)
+		if err != nil {
+			return fmt.Errorf("HTTP request body: %w", err)
+		}
+		payload = processed.(map[string]interface{})
+	}
+	f.apiResponse, err = f.makeRequest(f.apiApp, method, requestURL.String(), payload, headers)
 	return err
 }
 
-func (f *FeaturesContext) assertResponseStatus(status int) error {
+func (f *FeaturesContext) assertHTTPResponseWithBody(status string, body *godog.DocString) error {
+	return f.assertHTTPResponse(status, nil, body)
+}
+
+func (f *FeaturesContext) assertHTTPResponseWithHeaders(status string, table *godog.Table, body *godog.DocString) error {
+	return f.assertHTTPResponse(status, table, body)
+}
+
+func (f *FeaturesContext) assertResponseStatus(status string) error {
 	if f.apiResponse == nil {
 		return fmt.Errorf("[1922432244] no API response available")
 	}
+	return f.compareHTTPStatus(status, f.apiResponse.Code)
+}
 
-	if f.apiResponse.Code != status {
-		return fmt.Errorf("expected response status: %d, actual status: %d, response: %s",
-			status, f.apiResponse.Code, f.apiResponse.Body.String())
+func (f *FeaturesContext) assertEmptyHTTPResponse(status string) error {
+	if err := f.assertResponseStatus(status); err != nil {
+		return err
+	}
+	if actual := f.apiResponse.Body.String(); actual != "" {
+		return fmt.Errorf("HTTP response body: expected empty body, got %q", actual)
 	}
 	return nil
 }
 
-func (f *FeaturesContext) assertJsonResponse(status int, data *godog.DocString) error {
-	err := f.assertResponseStatus(status)
-	if err != nil {
-		return fmt.Errorf("[19028028] assert response status: %w", err)
+func (f *FeaturesContext) assertHTTPResponse(status string, table *godog.Table, body *godog.DocString) error {
+	if err := f.assertResponseStatus(status); err != nil {
+		return err
 	}
-
-	if data != nil {
-		err = f.jsonComparator.CompareJSON(data.Content, f.apiResponse.Body.String())
+	if table != nil {
+		rows, err := parseHTTPTable(table, map[string]bool{"header": true})
 		if err != nil {
-			return fmt.Errorf("[1525112511] assert json eq: %w", err)
+			return err
+		}
+		for _, row := range rows {
+			name, err := f.resolveHTTPText(row.name)
+			if err != nil {
+				return fmt.Errorf("HTTP response header name: %w", err)
+			}
+			values := f.apiResponse.Header().Values(name)
+			if len(values) == 0 {
+				return fmt.Errorf("HTTP response is missing header %q", name)
+			}
+			if err := f.compareHTTPText(row.value, values[0]); err != nil {
+				return fmt.Errorf("HTTP response header %q: %w", name, err)
+			}
 		}
 	}
-
+	if body == nil {
+		return fmt.Errorf("HTTP response requires a body DocString")
+	}
+	if err := f.jsonComparator.CompareJSON(body.Content, f.apiResponse.Body.String()); err != nil {
+		return fmt.Errorf("HTTP response body: %w", err)
+	}
 	return nil
 }
