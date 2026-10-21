@@ -50,6 +50,14 @@ Feature: Basic database steps
       | id | note         |
       | 1  | default-note |
 
+  Scenario: Empty string values can be inserted explicitly
+    Given add "step_items" records
+      | id | name | note    |
+      | 1  | Ada  | $EMPTY$ |
+    Then have "step_items" records
+      | id | note |
+      | 1  |      |
+
   Scenario: Null values survive a data table insert
     Given add "step_items" records
       | id | name | note   |

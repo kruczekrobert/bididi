@@ -246,7 +246,7 @@ Given add "step_items" records
   | 1  | $VAR(row_name)$ |
 ```
 
-Inserts rows from a table. Empty cells omit the column so the database default can apply. `$NULL$` inserts SQL `NULL`.
+Inserts rows from a table. Empty cells omit the column so the database default can apply. `$NULL$` inserts SQL `NULL`, and `$EMPTY$` inserts an empty string.
 
 ### Verify Records Exist
 

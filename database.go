@@ -103,6 +103,12 @@ func (f *FeaturesContext) addRecords(tableName string, data *godog.Table) error 
 			if value == "" {
 				continue
 			}
+			if value == "$EMPTY$" {
+				columns = append(columns, column)
+				placeholders = append(placeholders, "?")
+				values = append(values, "")
+				continue
+			}
 
 			if value == nil {
 				columns = append(columns, column)
