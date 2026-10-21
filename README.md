@@ -163,20 +163,20 @@ Register an `http.Handler` with `features.RegisterApp(handler)` in Go before run
 When make a "GET" request to "/items/42"
 ```
 
-This sends a request without a body or metadata table. It also works for other methods, such as a POST without a body.
+This sends a request without a body or metadata table. It also works for other methods, such as a POST without a body. The same step accepts an optional metadata table and an optional JSON DocString.
 
-Use `with metadata` for query parameters or request headers:
+Add a table for query parameters or request headers:
 
 ```gherkin
-When make a "GET" request to "/query" with metadata
+When make a "GET" request to "/query"
   | type  | name | value |
   | query | tag  | go    |
 ```
 
-Use `with JSON` when sending a JSON body:
+Add a DocString when sending a JSON body:
 
 ```gherkin
-When make a "POST" request to "/echo" with JSON
+When make a "POST" request to "/echo"
   """
   {"name":"Ada"}
   """
@@ -185,7 +185,7 @@ When make a "POST" request to "/echo" with JSON
 To send both a JSON body and metadata:
 
 ```gherkin
-When make a "POST" request to "/echo" with JSON and metadata
+When make a "POST" request to "/echo"
   | type   | name    | value           |
   | query  | source  | checkout        |
   | header | X-Trace | $VAR(trace_id)$ |
@@ -194,7 +194,9 @@ When make a "POST" request to "/echo" with JSON and metadata
   """
 ```
 
-The metadata table uses columns `type`, `name`, and `value`. Repeat `query` rows for repeated parameters. The DocString is the request JSON object itself. Method, path, table names and values support variables and generating wildcards.
+The optional metadata table uses columns `type`, `name`, and `value`. Repeat `query` rows for repeated parameters. The optional DocString is the request JSON object itself. The table and DocString can appear in either order. Method, path, table names and values support variables and generating wildcards.
+
+The previous request suffixes `with metadata`, `with JSON`, and `with JSON and metadata` are no longer registered; remove the suffix and keep the existing table and/or DocString.
 
 ### Assert HTTP Response
 
@@ -213,10 +215,10 @@ Then have JSON response with status 200
 
 The status supports variables and comparison wildcards. The DocString compares the entire JSON body with the existing variable, wildcard, and unordered-array rules.
 
-To check response headers as well, use the table variant:
+To check response headers as well, add an optional table to the same step:
 
 ```gherkin
-Then have JSON response with status 200 with metadata
+Then have JSON response with status 200
   | type   | name         | value                           |
   | header | Content-Type | application/json; charset=utf-8 |
   """
@@ -224,7 +226,7 @@ Then have JSON response with status 200 with metadata
   """
 ```
 
-The table checks only the listed response headers.
+The optional table checks only the listed response headers. The JSON DocString remains required. Remove `with metadata` from existing JSON response assertions.
 
 To require an empty response body:
 
@@ -297,17 +299,25 @@ Call `features.MockURL()` in the Go test and pass the URL to the application und
 ### Define JSON Mock
 
 ```gherkin
-Given json mock "notification" for "POST" request to "events"
+Given json mock "notification" for "POST" request to "events" with status 200
   | type            | name   | value     |
   | query           | source | checkout  |
-  | status          |        | 200       |
   | response-header | X-Mock | from-mock |
   """
   {"accepted":true}
   """
 ```
 
-Method and path identify the mock in the step text. The required `status` row configures the HTTP status **returned by the mock**; it is not an assertion. `query` selects which incoming request the mock handles. `response-header` sets a header returned by the mock. The DocString is the JSON response body. Variables and generating wildcards work in the step text, table, and body.
+Method, path, and the required status are supplied in the step text. The status configures the HTTP response returned by the mock. The metadata table is optional and accepts `query` and `response-header` rows. `query` selects which incoming request the mock handles. `response-header` sets a header returned by the mock. The required DocString is the JSON response body. Variables and generating wildcards work in the step text, table, and body. Move existing `status` rows into `with status ...` in the step text; `status` rows are no longer accepted.
+
+Without additional metadata:
+
+```gherkin
+Given json mock "unavailable" for "POST" request to "events" with status 503
+  """
+  {"error":"unavailable"}
+  """
+```
 
 ### Verify Mock Was Called
 
@@ -326,7 +336,7 @@ Declare `unused` first; assertions refer to named mocks already in the registry.
 ### Verify Mock Was Called With Specific Data
 
 ```gherkin
-Then json mock "notification" was called with
+Then json mock "notification" was called with status 200
   | type            | name         | value            |
   | query           | source       | checkout         |
   | header          | Content-Type | application/json |
@@ -336,7 +346,17 @@ Then json mock "notification" was called with
   """
 ```
 
-`header` checks a header received by the mock. `response-header` checks a header sent by the mock. This assertion table accepts `query`, `header`, and `response-header`; it does not accept `status`. The assertion succeeds if any recorded call matches the listed query parameters, headers, and optional JSON request body. Variables and comparison wildcards work in assertions. For a table-only assertion, use `Then json mock "notification" was called with metadata`. The application's HTTP response status can be checked with `Then have response with status 200`. See [mock scenarios](tests/test-app/features/mock_steps.feature).
+The `was called` step accepts an optional `with status ...` suffix, an optional metadata table, and an optional JSON request DocString. Use the same step for a body-only assertion, a table-only assertion, or both. Replace the previous `was called with` and `was called with metadata` spellings with `was called`, optionally followed by `with status ...`.
+
+`header` checks a header received by the mock. `response-header` checks a header sent by the mock. The table accepts `query`, `header`, and `response-header`; status belongs in the step text. The assertion succeeds if one recorded call matches the expected returned status, listed query parameters, headers, and JSON request body. Variables and comparison wildcards work in assertions, including the status.
+
+To check only that the mock returned a particular status:
+
+```gherkin
+Then json mock "unavailable" was called with status 503
+```
+
+The application's HTTP response status is checked separately with `Then have response with status 200`. See [mock scenarios](tests/test-app/features/mock_steps.feature).
 
 ## 🧮 Variable Handling Steps
 
@@ -576,9 +596,7 @@ Feature: Item notification
       """
       {"id":"$VAR(item_id)$","name":"Ada"}
       """
-    And json mock "notification" for "POST" request to "events"
-      | type   | name | value |
-      | status |      | 200    |
+    And json mock "notification" for "POST" request to "events" with status 200
       """
       {"accepted":true}
       """
@@ -587,7 +605,7 @@ Feature: Item notification
       """
       {"item":{"id":"42","name":"Ada"},"notification":{"accepted":true}}
       """
-    And json mock "notification" was called with
+    And json mock "notification" was called with status 200
       | type   | name         | value            |
       | header | Content-Type | application/json |
       """

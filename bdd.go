@@ -90,6 +90,9 @@ func (f *FeaturesContext) clear(ctx context.Context, _ *godog.Scenario) (context
 func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Before(f.clear)
 	ctx.After(f.afterScenario)
+	ctx.StepContext().Before(func(ctx context.Context, step *godog.Step) (context.Context, error) {
+		return context.WithValue(ctx, httpStepContextKey{}, step), nil
+	})
 
 	// sql
 	ctx.Step(`^add "([^"]*)" records$`, f.addRecords)
@@ -108,21 +111,30 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 
 	// HTTP request steps
 	ctx.Step(`^app is running$`, f.appIsRunning)
-	ctx.Step(`^make a "([^"]*)" request to "([^"]*)"$`, f.makeHTTPRequestWithoutBody)
-	ctx.Step(`^make a "([^"]*)" request to "([^"]*)" with metadata$`, f.makeHTTPRequestWithoutBodyAndMetadata)
-	ctx.Step(`^make a "([^"]*)" request to "([^"]*)" with JSON$`, f.makeHTTPRequestWithBody)
-	ctx.Step(`^make a "([^"]*)" request to "([^"]*)" with JSON and metadata$`, f.makeHTTPRequestWithBodyAndMetadata)
+	ctx.Step(`^make a "([^"]*)" request to "([^"]*)"$`, func(ctx context.Context, method, path string) error {
+		table, body := httpStepArguments(ctx)
+		return f.makeHTTPRequest(method, path, table, body)
+	})
 	ctx.Step(`^have response with status ([^ ]+)$`, f.assertResponseStatus)
-	ctx.Step(`^have JSON response with status ([^ ]+)$`, f.assertHTTPResponseWithBody)
-	ctx.Step(`^have JSON response with status ([^ ]+) with metadata$`, f.assertHTTPResponseWithHeaders)
+	ctx.Step(`^have JSON response with status ([^ ]+)$`, func(ctx context.Context, status string) error {
+		table, body := httpStepArguments(ctx)
+		return f.assertHTTPResponse(status, table, body)
+	})
 	ctx.Step(`^have empty response with status ([^ ]+)$`, f.assertEmptyHTTPResponse)
 
 	// Mock steps
-	ctx.Step(`^json mock "([^"]*)" for "([^"]*)" request to "([^"]*)"$`, f.jsonMockFromTable)
-	ctx.Step(`^json mock "([^"]*)" was called$`, f.jsonMockWasCalled)
+	ctx.Step(`^json mock "([^"]*)" for "([^"]*)" request to "([^"]*)" with status ([^ ]+)$`, func(ctx context.Context, name, method, path, status string) error {
+		table, body := httpStepArguments(ctx)
+		return f.jsonMockFromTable(name, method, path, status, table, body)
+	})
+	ctx.Step(`^json mock "([^"]*)" was called(?: with status ([^ ]+))?$`, func(ctx context.Context, name, status string) error {
+		table, body := httpStepArguments(ctx)
+		if status == "" && table == nil && body == nil {
+			return f.jsonMockWasCalled(name)
+		}
+		return f.assertMockCallFromTable(name, status, table, body)
+	})
 	ctx.Step(`^json mock "([^"]*)" was not called$`, f.jsonMockWasNotCalled)
-	ctx.Step(`^json mock "([^"]*)" was called with$`, f.mockWasCalledWithTable)
-	ctx.Step(`^json mock "([^"]*)" was called with metadata$`, f.mockWasCalledWithTableWithoutBody)
 
 	// Cache steps
 	ctx.Step(`^cache key "([^"]*)" exists$`, f.assertCacheKeyExists)
@@ -181,6 +193,7 @@ func (f *FeaturesContext) handleMockRequest(w http.ResponseWriter, r *http.Reque
 				call := MockCall{
 					Method:   method,
 					Path:     fullURL,
+					Status:   mock.Status,
 					Query:    r.URL.Query(),
 					Headers:  headers,
 					Payload:  payload,

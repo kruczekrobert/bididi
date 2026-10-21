@@ -5,7 +5,7 @@ Feature: Basic HTTP steps
 
   Scenario: GET returns a JSON response
     When make a "GET" request to "/items/42"
-    Then have JSON response with status 200 with metadata
+    Then have JSON response with status 200
       | type   | name         | value                           |
       | header | Content-Type | application/json; charset=utf-8 |
       """
@@ -21,7 +21,7 @@ Feature: Basic HTTP steps
     Then have empty response with status 204
 
   Scenario: POST sends a plain JSON payload
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"name":"Ada"}
       """
@@ -31,10 +31,10 @@ Feature: Basic HTTP steps
       """
 
   Scenario: GET sends and checks headers
-    When make a "GET" request to "/headers" with metadata
+    When make a "GET" request to "/headers"
       | type   | name    | value         |
       | header | X-Trace | literal-trace |
-    Then have JSON response with status 200 with metadata
+    Then have JSON response with status 200
       | type   | name    | value         |
       | header | X-Trace | literal-trace |
       """
@@ -42,7 +42,7 @@ Feature: Basic HTTP steps
       """
 
   Scenario: POST sends a payload and headers
-    When make a "POST" request to "/echo" with JSON and metadata
+    When make a "POST" request to "/echo"
       | type   | name    | value    |
       | header | X-Trace | combined |
       """
@@ -64,10 +64,10 @@ Feature: Basic HTTP steps
   Scenario: Variables resolve in header names and values
     Given set variable "header_name" to "str:X-Trace"
     And set variable "trace_id" to "str:trace-42"
-    When make a "GET" request to "/headers" with metadata
+    When make a "GET" request to "/headers"
       | type   | name               | value           |
       | header | $VAR(header_name)$ | $VAR(trace_id)$ |
-    Then have JSON response with status 200 with metadata
+    Then have JSON response with status 200
       | type   | name               | value           |
       | header | $VAR(header_name)$ | $VAR(trace_id)$ |
       """
@@ -76,7 +76,7 @@ Feature: Basic HTTP steps
 
   Scenario: Query rows support repeated values and variables
     Given set variable "tag" to "str:bdd"
-    When make a "GET" request to "/query" with metadata
+    When make a "GET" request to "/query"
       | type   | name | value      |
       | query  | tag  | go         |
       | query  | tag  | $VAR(tag)$ |
@@ -88,7 +88,7 @@ Feature: Basic HTTP steps
   Scenario: A variable resolves in the request payload and status
     Given set variable "count" to "int:7"
     And set variable "status" to "int:200"
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"count":"$VAR(count)$"}
       """
@@ -106,7 +106,7 @@ Feature: Basic HTTP steps
       """
 
   Scenario: JSON assertions accept typed wildcards
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"count":7,"price":1.5,"enabled":true,"name":"Ada","empty":"","nothing":null}
       """
@@ -116,7 +116,7 @@ Feature: Basic HTTP steps
       """
 
   Scenario: JSON arrays are compared without relying on order
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"items":["Ada","Bob"]}
       """
@@ -126,7 +126,7 @@ Feature: Basic HTTP steps
       """
 
   Scenario: ANY accepts values of different JSON types
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"number":7,"flag":true,"value":null}
       """
@@ -136,7 +136,7 @@ Feature: Basic HTTP steps
       """
 
   Scenario: Unordered arrays find a valid assignment for broad and specific values
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"items":["Ada","Bob"]}
       """
@@ -146,7 +146,7 @@ Feature: Basic HTTP steps
       """
 
   Scenario: Custom wildcard generates input and matches output
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"name":"$TEST_VALUE$"}
       """

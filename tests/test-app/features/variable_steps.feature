@@ -5,7 +5,7 @@ Feature: Variable handling steps
 
   Scenario Outline: Set variable preserves the requested JSON type
     Given set variable "value" to "<input>"
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"value":"$VAR(value)$"}
       """
@@ -51,7 +51,7 @@ Feature: Variable handling steps
     And variable "copy" equals "42"
 
   Scenario: Variable values are escaped in JSON assertions
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"name":"Ada \"Lovelace\""}
       """
@@ -81,12 +81,12 @@ Feature: Variable handling steps
     Then variable "name" not equals "$NULL$"
 
   Scenario Outline: Extract a response value with a type prefix
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"value":<source>}
       """
     And extract "payload.value" from response as "<prefix>result"
-    And make a "POST" request to "/echo" with JSON
+    And make a "POST" request to "/echo"
       """
       {"value":"$VAR(result)$"}
       """
@@ -104,7 +104,7 @@ Feature: Variable handling steps
       | "42"   | auto:  | 42       |
 
   Scenario: Extract a value from an array in the response
-    When make a "POST" request to "/echo" with JSON
+    When make a "POST" request to "/echo"
       """
       {"items":[{"name":"Ada"}]}
       """

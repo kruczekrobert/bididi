@@ -9,11 +9,11 @@ import (
 	"github.com/cucumber/godog"
 )
 
-func (f *FeaturesContext) jsonMockFromTable(name, method, path string, table *godog.Table, body *godog.DocString) error {
+func (f *FeaturesContext) jsonMockFromTable(name, method, path, status string, table *godog.Table, body *godog.DocString) error {
 	if body == nil {
 		return fmt.Errorf("mock %q requires a JSON response body", name)
 	}
-	rows, err := parseHTTPTable(table, map[string]bool{"query": true, "status": true, "response-header": true})
+	rows, err := parseHTTPTable(table, map[string]bool{"query": true, "response-header": true})
 	if err != nil {
 		return err
 	}
@@ -26,8 +26,14 @@ func (f *FeaturesContext) jsonMockFromTable(name, method, path string, table *go
 		return fmt.Errorf("mock %q path: %w", name, err)
 	}
 	config := MockConfig{Method: method, Path: path, Headers: make(map[string]string)}
+	status, err = f.resolveHTTPText(status)
+	if err == nil {
+		config.Status, err = strconv.Atoi(status)
+	}
+	if err != nil {
+		return fmt.Errorf("mock %q status: %w", name, err)
+	}
 	query := make(url.Values)
-	statusSet := false
 	for _, row := range rows {
 		switch row.typeName {
 		case "query":
@@ -39,16 +45,6 @@ func (f *FeaturesContext) jsonMockFromTable(name, method, path string, table *go
 			if err == nil {
 				query.Add(key, value)
 			}
-		case "status":
-			if statusSet {
-				return fmt.Errorf("mock %q has more than one status", name)
-			}
-			var status string
-			status, err = f.resolveHTTPText(row.value)
-			if err == nil {
-				config.Status, err = strconv.Atoi(status)
-			}
-			statusSet = true
 		case "response-header":
 			var key, value string
 			key, err = f.resolveHTTPText(row.name)
@@ -62,9 +58,6 @@ func (f *FeaturesContext) jsonMockFromTable(name, method, path string, table *go
 		if err != nil {
 			return fmt.Errorf("mock %q %s: %w", name, row.typeName, err)
 		}
-	}
-	if !statusSet || config.Method == "" || config.Path == "" {
-		return fmt.Errorf("mock %q requires method, path and status", name)
 	}
 	parsedURL, err := url.Parse(config.Path)
 	if err != nil {
@@ -83,20 +76,13 @@ func (f *FeaturesContext) jsonMockFromTable(name, method, path string, table *go
 	return f.registerMockConfig(name, config)
 }
 
-func (f *FeaturesContext) mockWasCalledWithTable(name string, table *godog.Table, body *godog.DocString) error {
-	return f.assertMockCallFromTable(name, table, body)
-}
-
-func (f *FeaturesContext) mockWasCalledWithTableWithoutBody(name string, table *godog.Table) error {
-	return f.assertMockCallFromTable(name, table, nil)
-}
-
-func (f *FeaturesContext) assertMockCallFromTable(name string, table *godog.Table, body *godog.DocString) error {
+func (f *FeaturesContext) assertMockCallFromTable(name, status string, table *godog.Table, body *godog.DocString) error {
 	rows, err := parseHTTPTable(table, map[string]bool{"query": true, "header": true, "response-header": true})
 	if err != nil {
 		return err
 	}
 	expected := MockExpectation{
+		Status:          status,
 		Headers:         make(map[string]string),
 		Query:           make(url.Values),
 		ResponseHeaders: make(map[string]string),

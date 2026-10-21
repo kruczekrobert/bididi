@@ -1,11 +1,23 @@
 package bdd
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
 	"github.com/cucumber/godog"
 )
+
+type httpStepContextKey struct{}
+
+// Godog binds only supplied arguments, so optional arguments come from the current step.
+func httpStepArguments(ctx context.Context) (*godog.Table, *godog.DocString) {
+	step, _ := ctx.Value(httpStepContextKey{}).(*godog.Step)
+	if step == nil || step.Argument == nil {
+		return nil, nil
+	}
+	return step.Argument.DataTable, step.Argument.DocString
+}
 
 type httpTableRow struct {
 	typeName string
@@ -15,7 +27,7 @@ type httpTableRow struct {
 
 func parseHTTPTable(table *godog.Table, allowed map[string]bool) ([]httpTableRow, error) {
 	if table == nil || len(table.Rows) == 0 {
-		return nil, fmt.Errorf("HTTP step requires a table")
+		return nil, nil
 	}
 	columns := table.Rows[0].Cells
 	if len(columns) != 3 || columns[0].Value != "type" || columns[1].Value != "name" || columns[2].Value != "value" {

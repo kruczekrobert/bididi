@@ -16,22 +16,6 @@ func (f *FeaturesContext) appIsRunning() error {
 	return nil
 }
 
-func (f *FeaturesContext) makeHTTPRequestWithBody(method, path string, body *godog.DocString) error {
-	return f.makeHTTPRequest(method, path, nil, body)
-}
-
-func (f *FeaturesContext) makeHTTPRequestWithBodyAndMetadata(method, path string, table *godog.Table, body *godog.DocString) error {
-	return f.makeHTTPRequest(method, path, table, body)
-}
-
-func (f *FeaturesContext) makeHTTPRequestWithoutBody(method, path string) error {
-	return f.makeHTTPRequest(method, path, nil, nil)
-}
-
-func (f *FeaturesContext) makeHTTPRequestWithoutBodyAndMetadata(method, path string, table *godog.Table) error {
-	return f.makeHTTPRequest(method, path, table, nil)
-}
-
 func (f *FeaturesContext) makeHTTPRequest(method, path string, table *godog.Table, body *godog.DocString) error {
 	if f.apiApp == nil {
 		return fmt.Errorf("[14538538] app is not running")
@@ -107,14 +91,6 @@ func (f *FeaturesContext) makeHTTPRequest(method, path string, table *godog.Tabl
 	}
 	f.apiResponse, err = f.makeRequest(f.apiApp, method, requestURL.String(), payload, headers)
 	return err
-}
-
-func (f *FeaturesContext) assertHTTPResponseWithBody(status string, body *godog.DocString) error {
-	return f.assertHTTPResponse(status, nil, body)
-}
-
-func (f *FeaturesContext) assertHTTPResponseWithHeaders(status string, table *godog.Table, body *godog.DocString) error {
-	return f.assertHTTPResponse(status, table, body)
 }
 
 func (f *FeaturesContext) assertResponseStatus(status string) error {

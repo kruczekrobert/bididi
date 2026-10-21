@@ -8,6 +8,7 @@ import (
 )
 
 type MockExpectation struct {
+	Status          string                 `json:"status,omitempty"`
 	Payload         map[string]interface{} `json:"payload,omitempty"`
 	Headers         map[string]string      `json:"headers,omitempty"`
 	Query           url.Values             `json:"query,omitempty"`
@@ -17,6 +18,7 @@ type MockExpectation struct {
 type MockCall struct {
 	Method          string                 `json:"method"`
 	Path            string                 `json:"path"`
+	Status          int                    `json:"status"`
 	Query           url.Values             `json:"query"`
 	Headers         map[string]string      `json:"headers"`
 	ResponseHeaders map[string]string      `json:"response_headers"`
@@ -156,6 +158,7 @@ func (f *FeaturesContext) assertMockCall(name string, expected MockExpectation, 
 
 	for i, call := range mock.CallHistory {
 		callJSON, _ := json.Marshal(MockExpectation{
+			Status:          fmt.Sprint(call.Status),
 			Payload:         call.Payload,
 			Headers:         call.Headers,
 			Query:           call.Query,
@@ -171,6 +174,11 @@ func (f *FeaturesContext) assertMockCall(name string, expected MockExpectation, 
 }
 
 func (f *FeaturesContext) matchesMockCall(expected MockExpectation, call MockCall) (bool, error) {
+	if expected.Status != "" {
+		if err := f.compareHTTPStatus(expected.Status, call.Status); err != nil {
+			return false, fmt.Errorf("status: %w", err)
+		}
+	}
 	if expected.Payload != nil {
 		expectedJSON, err := json.Marshal(expected.Payload)
 		if err != nil {
