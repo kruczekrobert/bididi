@@ -10,26 +10,26 @@ import (
 	"github.com/cucumber/godog"
 )
 
-type RedisClient interface {
+type Cache interface {
 	Exists(ctx context.Context, key string) (bool, error)
 	Get(ctx context.Context, key string) (string, bool, error)
 	Set(ctx context.Context, key, value string, ttl time.Duration) error
 }
 
-func parseRedisTTL(value string) (time.Duration, error) {
+func parseCacheTTL(value string) (time.Duration, error) {
 	ttl, err := time.ParseDuration(value)
 	if err != nil {
-		return 0, fmt.Errorf("invalid Redis TTL %q: %w", value, err)
+		return 0, fmt.Errorf("invalid cache TTL %q: %w", value, err)
 	}
 	if ttl <= 0 {
-		return 0, fmt.Errorf("Redis TTL must be positive: %q", value)
+		return 0, fmt.Errorf("cache TTL must be positive: %q", value)
 	}
 	return ttl, nil
 }
 
-func (f *FeaturesContext) assertRedisKeyExists(key string) error {
-	if f.redis == nil {
-		return fmt.Errorf("redis not configured")
+func (f *FeaturesContext) assertCacheKeyExists(key string) error {
+	if f.cache == nil {
+		return fmt.Errorf("cache not configured")
 	}
 	processedKey, err := f.wildcardProcessor.ResolveWildcards(key)
 	if err != nil {
@@ -41,21 +41,21 @@ func (f *FeaturesContext) assertRedisKeyExists(key string) error {
 		return fmt.Errorf("processed key is not a string: %T", processedKey)
 	}
 
-	exists, err := f.redis.Exists(context.Background(), keyStr)
+	exists, err := f.cache.Exists(context.Background(), keyStr)
 	if err != nil {
 		return fmt.Errorf("failed to check if key exists: %v", err)
 	}
 
 	if !exists {
-		return fmt.Errorf("key '%s' does not exist in Redis", keyStr)
+		return fmt.Errorf("key '%s' does not exist in cache", keyStr)
 	}
 
 	return nil
 }
 
-func (f *FeaturesContext) assertRedisKeyDoesNotExists(key string) error {
-	if f.redis == nil {
-		return fmt.Errorf("redis not configured")
+func (f *FeaturesContext) assertCacheKeyDoesNotExists(key string) error {
+	if f.cache == nil {
+		return fmt.Errorf("cache not configured")
 	}
 	processedKey, err := f.wildcardProcessor.ResolveWildcards(key)
 	if err != nil {
@@ -67,24 +67,24 @@ func (f *FeaturesContext) assertRedisKeyDoesNotExists(key string) error {
 		return fmt.Errorf("processed key is not a string: %T", processedKey)
 	}
 
-	exists, err := f.redis.Exists(context.Background(), keyStr)
+	exists, err := f.cache.Exists(context.Background(), keyStr)
 	if err != nil {
 		return fmt.Errorf("failed to check if key exists: %v", err)
 	}
 
 	if exists {
-		return fmt.Errorf("key '%s' exists in Redis but it shouldn't", keyStr)
+		return fmt.Errorf("key '%s' exists in cache but it shouldn't", keyStr)
 	}
 
 	return nil
 }
 
-func (f *FeaturesContext) assertRedisValueJson(key string, expectedJSON *godog.DocString) error {
-	if f.redis == nil {
-		return fmt.Errorf("redis not configured")
+func (f *FeaturesContext) assertCacheValueJson(key string, expectedJSON *godog.DocString) error {
+	if f.cache == nil {
+		return fmt.Errorf("cache not configured")
 	}
 	if expectedJSON == nil {
-		return fmt.Errorf("expected Redis JSON doc string is missing")
+		return fmt.Errorf("expected cache JSON doc string is missing")
 	}
 	processedKey, err := f.wildcardProcessor.ResolveWildcards(key)
 	if err != nil {
@@ -96,12 +96,12 @@ func (f *FeaturesContext) assertRedisValueJson(key string, expectedJSON *godog.D
 		return fmt.Errorf("processed key is not a string: %T", processedKey)
 	}
 
-	actualValue, found, err := f.redis.Get(context.Background(), keyStr)
+	actualValue, found, err := f.cache.Get(context.Background(), keyStr)
 	if err != nil {
 		return fmt.Errorf("failed to get key '%s': %v", keyStr, err)
 	}
 	if !found {
-		return fmt.Errorf("key '%s' does not exist in Redis", keyStr)
+		return fmt.Errorf("key '%s' does not exist in cache", keyStr)
 	}
 
 	if err := f.jsonComparator.CompareJSON(expectedJSON.Content, actualValue); err != nil {
@@ -111,12 +111,12 @@ func (f *FeaturesContext) assertRedisValueJson(key string, expectedJSON *godog.D
 	return nil
 }
 
-func (f *FeaturesContext) assertRedisValueString(key string, expectedValue *godog.DocString) error {
-	if f.redis == nil {
-		return fmt.Errorf("redis not configured")
+func (f *FeaturesContext) assertCacheValueString(key string, expectedValue *godog.DocString) error {
+	if f.cache == nil {
+		return fmt.Errorf("cache not configured")
 	}
 	if expectedValue == nil {
-		return fmt.Errorf("expected Redis string doc string is missing")
+		return fmt.Errorf("expected cache string doc string is missing")
 	}
 	processedKey, err := f.wildcardProcessor.ResolveWildcards(key)
 	if err != nil {
@@ -128,12 +128,12 @@ func (f *FeaturesContext) assertRedisValueString(key string, expectedValue *godo
 		return fmt.Errorf("processed key is not a string: %T", processedKey)
 	}
 
-	actualValue, found, err := f.redis.Get(context.Background(), keyStr)
+	actualValue, found, err := f.cache.Get(context.Background(), keyStr)
 	if err != nil {
 		return fmt.Errorf("failed to get key '%s': %v", keyStr, err)
 	}
 	if !found {
-		return fmt.Errorf("key '%s' does not exist in Redis", keyStr)
+		return fmt.Errorf("key '%s' does not exist in cache", keyStr)
 	}
 
 	processedExpected, err := f.wildcardProcessor.ResolveWildcards(expectedValue.Content)
@@ -162,21 +162,21 @@ func (f *FeaturesContext) assertRedisValueString(key string, expectedValue *godo
 	return nil
 }
 
-func (f *FeaturesContext) setRedisValue(key string, value *godog.DocString) error {
-	return f.setRedisValueForTTL(key, value, 0)
+func (f *FeaturesContext) setCacheValue(key string, value *godog.DocString) error {
+	return f.setCacheValueForTTL(key, value, 0)
 }
 
-func (f *FeaturesContext) setRedisValueWithTTL(key, ttlValue string, value *godog.DocString) error {
-	ttl, err := parseRedisTTL(ttlValue)
+func (f *FeaturesContext) setCacheValueWithTTL(key, ttlValue string, value *godog.DocString) error {
+	ttl, err := parseCacheTTL(ttlValue)
 	if err != nil {
 		return err
 	}
-	return f.setRedisValueForTTL(key, value, ttl)
+	return f.setCacheValueForTTL(key, value, ttl)
 }
 
-func (f *FeaturesContext) setRedisValueForTTL(key string, value *godog.DocString, ttl time.Duration) error {
-	if f.redis == nil {
-		return fmt.Errorf("redis not configured")
+func (f *FeaturesContext) setCacheValueForTTL(key string, value *godog.DocString, ttl time.Duration) error {
+	if f.cache == nil {
+		return fmt.Errorf("cache not configured")
 	}
 	processedKey, err := f.wildcardProcessor.SubstituteWildcards(key)
 	if err != nil {
@@ -203,7 +203,7 @@ func (f *FeaturesContext) setRedisValueForTTL(key string, value *godog.DocString
 		}
 	}
 
-	err = f.redis.Set(context.Background(), keyStr, valStr, ttl)
+	err = f.cache.Set(context.Background(), keyStr, valStr, ttl)
 	if err != nil {
 		return fmt.Errorf("failed to set key '%s': %v", keyStr, err)
 	}
@@ -211,21 +211,21 @@ func (f *FeaturesContext) setRedisValueForTTL(key string, value *godog.DocString
 	return nil
 }
 
-func (f *FeaturesContext) setRedisJSONValue(key string, value *godog.DocString) error {
-	return f.setRedisJSONValueForTTL(key, value, 0)
+func (f *FeaturesContext) setCacheJSONValue(key string, value *godog.DocString) error {
+	return f.setCacheJSONValueForTTL(key, value, 0)
 }
 
-func (f *FeaturesContext) setRedisJSONValueWithTTL(key, ttlValue string, value *godog.DocString) error {
-	ttl, err := parseRedisTTL(ttlValue)
+func (f *FeaturesContext) setCacheJSONValueWithTTL(key, ttlValue string, value *godog.DocString) error {
+	ttl, err := parseCacheTTL(ttlValue)
 	if err != nil {
 		return err
 	}
-	return f.setRedisJSONValueForTTL(key, value, ttl)
+	return f.setCacheJSONValueForTTL(key, value, ttl)
 }
 
-func (f *FeaturesContext) setRedisJSONValueForTTL(key string, value *godog.DocString, ttl time.Duration) error {
-	if f.redis == nil {
-		return fmt.Errorf("redis not configured")
+func (f *FeaturesContext) setCacheJSONValueForTTL(key string, value *godog.DocString, ttl time.Duration) error {
+	if f.cache == nil {
+		return fmt.Errorf("cache not configured")
 	}
 	processedKey, err := f.wildcardProcessor.SubstituteWildcards(key)
 	if err != nil {
@@ -254,7 +254,7 @@ func (f *FeaturesContext) setRedisJSONValueForTTL(key string, value *godog.DocSt
 		valueToStore = string(encodedValue)
 	}
 
-	err = f.redis.Set(context.Background(), keyStr, valueToStore, ttl)
+	err = f.cache.Set(context.Background(), keyStr, valueToStore, ttl)
 	if err != nil {
 		return fmt.Errorf("failed to set key '%s': %v", keyStr, err)
 	}

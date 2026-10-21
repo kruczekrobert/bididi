@@ -1,6 +1,6 @@
 # 📘 bididi — BDD Steps Documentation for Developers
 
-Welcome to the guide for bididi, a reusable set of Godog steps for Go applications. It covers HTTP requests, database operations, mock services, Redis-style cache values, message buses, variables, and wildcards. The library accepts application interfaces; Gin, GORM, and Fx appear only in the example modules.
+Welcome to the guide for bididi, a reusable set of Godog steps for Go applications. It covers HTTP requests, database operations, mock services, cache values, message buses, variables, and wildcards. The library accepts application interfaces; Gin, GORM, and Fx appear only in the example modules.
 
 ## 📚 Table of Contents
 
@@ -11,7 +11,7 @@ Welcome to the guide for bididi, a reusable set of Godog steps for Go applicatio
 5. [🗄️ Database Steps](#️-database-steps)
 6. [🎭 Mock Service Steps](#-mock-service-steps)
 7. [🧮 Variable Handling Steps](#-variable-handling-steps)
-8. [💾 Redis Steps](#-redis-steps)
+8. [💾 Cache Steps](#-cache-steps)
 9. [📨 Message Bus Steps](#-message-bus-steps)
 10. [🃏 Wildcard System](#-wildcard-system)
 11. [🎯 Complete Example](#-complete-example)
@@ -23,7 +23,7 @@ Welcome to the guide for bididi, a reusable set of Godog steps for Go applicatio
 go get github.com/kruczekrobert/bididi
 ```
 
-The root module does not require Gin, GORM, Fx, or a Redis client. To use bididi, register an `http.Handler` and, when needed, implementations of these small interfaces:
+The root module does not require Gin, GORM, Fx, or a cache client package. To use bididi, register an `http.Handler` and, when needed, implementations of these small interfaces:
 
 ```go
 type Database interface {
@@ -32,7 +32,7 @@ type Database interface {
     Count(table string) (int64, error)
 }
 
-type RedisClient interface {
+type Cache interface {
     Exists(ctx context.Context, key string) (bool, error)
     Get(ctx context.Context, key string) (value string, found bool, err error)
     Set(ctx context.Context, key, value string, ttl time.Duration) error
@@ -348,6 +348,18 @@ Given set variable "name" to "str:Ada"
 
 The value can use a prefix: `str:` keeps text, `int:` makes an integer, `float:` makes a number, `bool:` makes a boolean, and `auto:` infers a type. An unprefixed value is also inferred. Values may contain `$VAR(name)$`, `$UUID$`, `$NOW$`, or a custom generating wildcard.
 
+### Set Multiple Variables
+
+```gherkin
+Given set variables
+  | name     | value          |
+  | order_id | str:42         |
+  | count    | int:2          |
+  | copy     | $VAR(order_id)$ |
+```
+
+The table requires `name` and `value` columns and at least one data row. Rows use the same type prefixes and wildcards as `set variable`. They run in order, so later rows can refer to variables set earlier in the table.
+
 ### Extract Variable from Response
 
 ```gherkin
@@ -378,14 +390,14 @@ This distinguishes the number `42` from the string `"42"` and also compares obje
 
 `$VAR(name)$` can appear in later step text, tables, doc strings, mock definitions, and outline examples. `$NULL$` can be compared with `equals` and `not equals`. See [variable scenarios](tests/test-app/features/variable_steps.feature).
 
-## 💾 Redis Steps
+## 💾 Cache Steps
 
-Register a `RedisClient` with `features.RegisterRedis(cache)`. The [test-app cache mock](tests/test-app/app_test.go) uses an in-memory map and clears it before each scenario; bididi does not require a Redis server or client package.
+Register a `Cache` with `features.RegisterCache(cache)`. The [test-app cache mock](tests/test-app/app_test.go) uses an in-memory map and clears it before each scenario; bididi does not require a particular cache backend.
 
-### Set Redis Key to String Value
+### Set Cache Key to String Value
 
 ```gherkin
-Given set redis key "greeting" to
+Given set cache key "greeting" to
   """
   hello
   """
@@ -393,12 +405,12 @@ Given set redis key "greeting" to
 
 Keys and values can contain variables and generating wildcards.
 
-Without a TTL, bididi passes `0` to `RedisClient.Set`, meaning no expiration.
+Without a TTL, bididi passes `0` to `Cache.Set`, meaning no expiration.
 
-### Set Redis Key to String Value with TTL
+### Set Cache Key to String Value with TTL
 
 ```gherkin
-Given set redis key "temporary" with TTL "30s" to
+Given set cache key "temporary" with TTL "30s" to
   """
   hello
   """
@@ -406,10 +418,10 @@ Given set redis key "temporary" with TTL "30s" to
 
 TTL uses Go duration syntax and must be positive. bididi passes it to the registered client; the client owns expiration behavior.
 
-### Set Redis Key to JSON Value
+### Set Cache Key to JSON Value
 
 ```gherkin
-Given set redis key "profile" to JSON
+Given set cache key "profile" to JSON
   """
   {"name":"Ada","count":7}
   """
@@ -417,31 +429,31 @@ Given set redis key "profile" to JSON
 
 Wildcards are resolved in the JSON structure before it is stored, preserving number and boolean types.
 
-### Set Redis Key to JSON Value with TTL
+### Set Cache Key to JSON Value with TTL
 
 ```gherkin
-Given set redis key "temporary-json" with TTL "2m" to JSON
+Given set cache key "temporary-json" with TTL "2m" to JSON
   """
   {"name":"Ada"}
   """
 ```
 
-### Check Redis Key Exists
+### Check Cache Key Exists
 
 ```gherkin
-Then redis key "profile" exists
+Then cache key "profile" exists
 ```
 
-### Check Redis Key Does Not Exist
+### Check Cache Key Does Not Exist
 
 ```gherkin
-Then redis key "missing" does not exist
+Then cache key "missing" does not exist
 ```
 
-### Check Redis Key Contains String
+### Check Cache Key Contains String
 
 ```gherkin
-Then have redis key "greeting" with string
+Then have cache key "greeting" with string
   """
   $ANY_STR_FULL$
   """
@@ -449,16 +461,16 @@ Then have redis key "greeting" with string
 
 Literal text, variables, built-in comparison wildcards, and custom matchers are supported.
 
-### Check Redis Key Contains JSON
+### Check Cache Key Contains JSON
 
 ```gherkin
-Then have redis key "profile" with JSON
+Then have cache key "profile" with JSON
   """
   {"name":"$ANY_STR_FULL$","count":"$ANY_INT$"}
   """
 ```
 
-See [Redis scenarios](tests/test-app/features/redis_steps.feature) for all eight steps, TTL propagation, scenario isolation, outlines, and custom wildcards.
+See [cache scenarios](tests/test-app/features/cache_steps.feature) for all eight steps, TTL propagation, scenario isolation, outlines, and custom wildcards.
 
 ## 📨 Message Bus Steps
 
@@ -560,7 +572,7 @@ Feature: Item notification
     And add "step_items" records
       | id | name |
       | 1  | Ada  |
-    And set redis key "item:$VAR(item_id)$" to JSON
+    And set cache key "item:$VAR(item_id)$" to JSON
       """
       {"id":"$VAR(item_id)$","name":"Ada"}
       """
@@ -581,7 +593,7 @@ Feature: Item notification
       """
       {"id":"42","name":"Ada"}
       """
-    And redis key "item:42" exists
+    And cache key "item:42" exists
     And have "step_items" records
       | id | name |
       | 1  | Ada  |

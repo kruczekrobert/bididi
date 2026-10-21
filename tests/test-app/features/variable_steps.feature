@@ -40,6 +40,16 @@ Feature: Variable handling steps
     And set variable "copy" to "$VAR(first)$"
     Then variable "copy" equals "Ada"
 
+  Scenario: Set variables from a table in row order
+    Given set variables
+      | name     | value           |
+      | order_id | str:42          |
+      | count    | int:2           |
+      | copy     | $VAR(order_id)$ |
+    Then variable "order_id" equals "42"
+    And variable "count" equals "2"
+    And variable "copy" equals "42"
+
   Scenario: Variable values are escaped in JSON assertions
     When make a "POST" request to "/echo" with JSON
       """

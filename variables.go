@@ -37,6 +37,27 @@ func (f *FeaturesContext) setVariable(varName, value string) error {
 	return nil
 }
 
+func (f *FeaturesContext) setVariables(table *godog.Table) error {
+	if table == nil || len(table.Rows) < 2 || len(table.Rows[0].Cells) != 2 ||
+		table.Rows[0].Cells[0].Value != "name" || table.Rows[0].Cells[1].Value != "value" {
+		return fmt.Errorf("variables table requires name and value columns and at least one row")
+	}
+
+	for i, row := range table.Rows[1:] {
+		if len(row.Cells) != 2 {
+			return fmt.Errorf("variable row %d must have two cells", i+2)
+		}
+		if row.Cells[0].Value == "" {
+			return fmt.Errorf("variable row %d requires a name", i+2)
+		}
+		if err := f.setVariable(row.Cells[0].Value, row.Cells[1].Value); err != nil {
+			return fmt.Errorf("variable row %d: %w", i+2, err)
+		}
+	}
+
+	return nil
+}
+
 func (f *FeaturesContext) checkVariable(varName, op, expected string) error {
 	expectedResolved, err := f.wildcardProcessor.ResolveWildcards(expected)
 	if err != nil {

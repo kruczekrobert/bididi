@@ -500,7 +500,7 @@ func TestConvertToBool(t *testing.T) {
 }
 
 func TestFeaturesContext_SetVariable(t *testing.T) {
-	f := NewFeaturesContext(t)
+	f := newFeaturesContext()
 
 	tests := []struct {
 		name          string

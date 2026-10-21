@@ -37,8 +37,8 @@ func (f *FeaturesContext) RegisterDB(db Database) {
 	f.db = db
 }
 
-func (f *FeaturesContext) RegisterRedis(redis RedisClient) {
-	f.redis = redis
+func (f *FeaturesContext) RegisterCache(cache Cache) {
+	f.cache = cache
 }
 
 func (f *FeaturesContext) RegisterMessageBus(bus MessageBus) {
@@ -67,7 +67,7 @@ type FeaturesContext struct {
 	mockHTTPServer    *httptest.Server
 	apiResponse       *httptest.ResponseRecorder
 	db                Database
-	redis             RedisClient
+	cache             Cache
 	messageBus        MessageBus
 	messageObservers  map[string]MessageObserver
 	observedMessages  map[string][]observedMessage
@@ -100,6 +100,7 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 
 	// vars
 	ctx.Step(`^set variable "([^"]*)" to "([^"]*)"$`, f.setVariable)
+	ctx.Step(`^set variables$`, f.setVariables)
 	ctx.Step(`^extract "([^"]*)" from response as "([^"]*)"$`, f.extractVariableFromResponse)
 	ctx.Step(`^extract from database "([^"]*)" as "([^"]*)"$`, f.extractVariableFromDatabase)
 	ctx.Step(`^variable "([^"]*)" (equals|not equals|contains|not contains) "([^"]*)"$`, f.checkVariable)
@@ -123,15 +124,15 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^json mock "([^"]*)" was called with$`, f.mockWasCalledWithTable)
 	ctx.Step(`^json mock "([^"]*)" was called with metadata$`, f.mockWasCalledWithTableWithoutBody)
 
-	// Redis steps
-	ctx.Step(`^redis key "([^"]*)" exists$`, f.assertRedisKeyExists)
-	ctx.Step(`^redis key "([^"]*)" does not exist$`, f.assertRedisKeyDoesNotExists)
-	ctx.Step(`^have redis key "([^"]*)" with JSON$`, f.assertRedisValueJson)
-	ctx.Step(`^have redis key "([^"]*)" with string$`, f.assertRedisValueString)
-	ctx.Step(`^set redis key "([^"]*)" to$`, f.setRedisValue)
-	ctx.Step(`^set redis key "([^"]*)" to JSON$`, f.setRedisJSONValue)
-	ctx.Step(`^set redis key "([^"]*)" with TTL "([^"]*)" to$`, f.setRedisValueWithTTL)
-	ctx.Step(`^set redis key "([^"]*)" with TTL "([^"]*)" to JSON$`, f.setRedisJSONValueWithTTL)
+	// Cache steps
+	ctx.Step(`^cache key "([^"]*)" exists$`, f.assertCacheKeyExists)
+	ctx.Step(`^cache key "([^"]*)" does not exist$`, f.assertCacheKeyDoesNotExists)
+	ctx.Step(`^have cache key "([^"]*)" with JSON$`, f.assertCacheValueJson)
+	ctx.Step(`^have cache key "([^"]*)" with string$`, f.assertCacheValueString)
+	ctx.Step(`^set cache key "([^"]*)" to$`, f.setCacheValue)
+	ctx.Step(`^set cache key "([^"]*)" to JSON$`, f.setCacheJSONValue)
+	ctx.Step(`^set cache key "([^"]*)" with TTL "([^"]*)" to$`, f.setCacheValueWithTTL)
+	ctx.Step(`^set cache key "([^"]*)" with TTL "([^"]*)" to JSON$`, f.setCacheJSONValueWithTTL)
 
 	// Message bus steps
 	ctx.Step(`^observe messages from "([^"]*)"$`, f.observeMessages)

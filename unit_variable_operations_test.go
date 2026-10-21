@@ -7,7 +7,7 @@ import (
 
 func TestVariableOperations(t *testing.T) {
 	// Create a new FeaturesContext for testing
-	f := NewFeaturesContext(t)
+	f := newFeaturesContext()
 	
 	// Set up a test variable
 	f.wildcardProcessor.SetVariable("test_text", "hello world")

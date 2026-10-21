@@ -7,7 +7,7 @@ import (
 )
 
 func TestCheckVariable(t *testing.T) {
-	f := NewFeaturesContext(t)
+	f := newFeaturesContext()
 
 	f.wildcardProcessor.SetVariable("test_string", "hello world")
 	f.wildcardProcessor.SetVariable("test_integer", 42)
@@ -47,7 +47,7 @@ func TestCheckVariable(t *testing.T) {
 }
 
 func TestCheckVariableJSON(t *testing.T) {
-	f := NewFeaturesContext(t)
+	f := newFeaturesContext()
 	f.wildcardProcessor.SetVariable("result", 42)
 	assert.NoError(t, f.checkVariableJSON("result", &godog.DocString{Content: "42"}))
 	assert.Error(t, f.checkVariableJSON("result", &godog.DocString{Content: `"42"`}))

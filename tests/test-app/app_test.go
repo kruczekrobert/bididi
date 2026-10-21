@@ -33,22 +33,22 @@ func (g gormDatabase) Count(table string) (int64, error) {
 	return count, err
 }
 
-type memoryRedis struct {
+type memoryCache struct {
 	values   map[string]string
 	ttlByKey map[string]time.Duration
 }
 
-func (m *memoryRedis) Exists(_ context.Context, key string) (bool, error) {
+func (m *memoryCache) Exists(_ context.Context, key string) (bool, error) {
 	_, ok := m.values[key]
 	return ok, nil
 }
 
-func (m *memoryRedis) Get(_ context.Context, key string) (string, bool, error) {
+func (m *memoryCache) Get(_ context.Context, key string) (string, bool, error) {
 	value, ok := m.values[key]
 	return value, ok, nil
 }
 
-func (m *memoryRedis) Set(_ context.Context, key, value string, ttl time.Duration) error {
+func (m *memoryCache) Set(_ context.Context, key, value string, ttl time.Duration) error {
 	m.values[key] = value
 	m.ttlByKey[key] = ttl
 	return nil
@@ -97,11 +97,11 @@ func TestFeature(t *testing.T) {
 	sqlDB.SetMaxOpenConns(1)
 	defer sqlDB.Close()
 	features.RegisterDB(gormDatabase{db: db})
-	cache := &memoryRedis{
+	cache := &memoryCache{
 		values:   make(map[string]string),
 		ttlByKey: make(map[string]time.Duration),
 	}
-	features.RegisterRedis(cache)
+	features.RegisterCache(cache)
 	bus := newMemoryMessageBus()
 	bus.handlers["orders.commands"] = func(ctx context.Context, data []byte) error {
 		return testapp.ProcessOrderCommand(ctx, data, bus.Publish)
