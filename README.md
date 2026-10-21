@@ -1,6 +1,6 @@
 # 📘 bididi — BDD Steps Documentation for Developers
 
-Welcome to the guide for bididi, a reusable set of Godog steps for Go applications. It covers HTTP requests, database operations, mock services, Redis-style cache values, variables, and wildcards. The library accepts application interfaces; Gin, GORM, and Fx appear only in the example modules.
+Welcome to the guide for bididi, a reusable set of Godog steps for Go applications. It covers HTTP requests, database operations, mock services, Redis-style cache values, message buses, variables, and wildcards. The library accepts application interfaces; Gin, GORM, and Fx appear only in the example modules.
 
 ## 📚 Table of Contents
 
@@ -12,9 +12,10 @@ Welcome to the guide for bididi, a reusable set of Godog steps for Go applicatio
 6. [🎭 Mock Service Steps](#-mock-service-steps)
 7. [🧮 Variable Handling Steps](#-variable-handling-steps)
 8. [💾 Redis Steps](#-redis-steps)
-9. [🃏 Wildcard System](#-wildcard-system)
-10. [🎯 Complete Example](#-complete-example)
-11. [🧪 Examples and Tests](#-examples-and-tests)
+9. [📨 Message Bus Steps](#-message-bus-steps)
+10. [🃏 Wildcard System](#-wildcard-system)
+11. [🎯 Complete Example](#-complete-example)
+12. [🧪 Examples and Tests](#-examples-and-tests)
 
 ## 📦 Install
 
@@ -306,7 +307,7 @@ Given json mock "notification" for "POST" request to "events"
   """
 ```
 
-Method and path identify the mock in the step text. A valid HTTP `status` is required in the table. `query` selects which incoming request the mock handles. `response-header` sets a header returned by the mock. The DocString is the JSON response body. Variables and generating wildcards work in the step text, table, and body.
+Method and path identify the mock in the step text. The required `status` row configures the HTTP status **returned by the mock**; it is not an assertion. `query` selects which incoming request the mock handles. `response-header` sets a header returned by the mock. The DocString is the JSON response body. Variables and generating wildcards work in the step text, table, and body.
 
 ### Verify Mock Was Called
 
@@ -335,7 +336,7 @@ Then json mock "notification" was called with
   """
 ```
 
-`header` checks a header received by the mock. `response-header` checks a header sent by the mock. The assertion succeeds if any recorded call matches the listed query parameters, headers, and optional JSON request body. Variables and comparison wildcards work in assertions. For a table-only assertion, use `Then json mock "notification" was called with metadata`. See [mock scenarios](tests/test-app/features/mock_steps.feature).
+`header` checks a header received by the mock. `response-header` checks a header sent by the mock. This assertion table accepts `query`, `header`, and `response-header`; it does not accept `status`. The assertion succeeds if any recorded call matches the listed query parameters, headers, and optional JSON request body. Variables and comparison wildcards work in assertions. For a table-only assertion, use `Then json mock "notification" was called with metadata`. The application's HTTP response status can be checked with `Then have response with status 200`. See [mock scenarios](tests/test-app/features/mock_steps.feature).
 
 ## 🧮 Variable Handling Steps
 
@@ -459,6 +460,55 @@ Then have redis key "profile" with JSON
 
 See [Redis scenarios](tests/test-app/features/redis_steps.feature) for all eight steps, TTL propagation, scenario isolation, outlines, and custom wildcards.
 
+## 📨 Message Bus Steps
+
+Register an implementation of `MessageBus` with `features.RegisterMessageBus(bus)` before running the suite. bididi supplies the steps and matching logic; the adapter decides how to publish and observe messages. The [test-app adapter](tests/test-app/message_bus_test.go) uses an in-memory bus. A GCP Pub/Sub or Redis Streams adapter can implement the same interface.
+
+```go
+type MessageBus interface {
+    Publish(ctx context.Context, destination string, data []byte) error
+    Observe(ctx context.Context, destination string) (MessageObserver, error)
+}
+
+type MessageObserver interface {
+    Next(ctx context.Context) (Message, error)
+    Close() error
+}
+
+type Message struct {
+    ID   string
+    Data []byte
+}
+```
+
+`Observe` must establish the observer's starting position before it returns, so messages published after the `Given` step can be read later by `Next`. `Next` waits for a message or its context to end. `Close` releases the observer after the scenario. The adapter can use a separate test subscription for Pub/Sub or a stream cursor for Redis Streams. The application still owns its own consumption and ACK/NACK behavior; the test observer reads independently. Supply stable message IDs when available so redeliveries are not counted twice.
+
+### Observe and publish
+
+```gherkin
+Given observe messages from "orders.events"
+When publish JSON message to "orders.commands"
+  """
+  {"order_id":"42"}
+  """
+```
+
+Start observing before the action that emits events. The publish step sends the JSON DocString as UTF-8 bytes. Destinations and JSON values can use variables and generating wildcards.
+
+### Assert published messages
+
+```gherkin
+Then within "5s" messages from "orders.events" contain JSON
+  """
+  [
+    {"type":"InvoiceRequested","order_id":"42","created_at":"$NOW$"},
+    {"type":"OrderCreated","order_id":"42","created_at":"$ANY_STR_FULL$"}
+  ]
+  """
+```
+
+The DocString must be a non-empty JSON array of objects. The step waits up to the given positive Go duration. Expected objects match distinct observed messages in any order; unrelated messages and extra object fields are allowed. Comparison wildcards and `$VAR(name)$` work in expected JSON. Observed messages stay in the scenario buffer, so later assertions can inspect them again without another read. An unmet assertion reports the messages observed before the timeout. See [message bus scenarios](tests/test-app/features/message_bus_steps.feature) for unordered events, variables, and wildcards.
+
 ## 🃏 Wildcard System
 
 Wildcards generate input data or validate output data, depending on the step:
@@ -544,7 +594,7 @@ The applications are separate Go modules with a local `replace` to this reposito
 | Module | Purpose |
 | --- | --- |
 | [examples/example-app](examples/example-app) | Minimal Gin handler assembled with Fx. |
-| [tests/test-app](tests/test-app) | BDD contract scenarios for every step group, with GORM/SQLite and an in-memory cache mock. |
+| [tests/test-app](tests/test-app) | BDD contract scenarios for every step group, with GORM/SQLite, an in-memory cache mock, and an in-memory message bus. |
 
 From the repository root, run each module's suite separately:
 
