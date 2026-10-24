@@ -150,6 +150,9 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^observe messages from "([^"]*)"$`, f.observeMessages)
 	ctx.Step(`^publish JSON message to "([^"]*)"$`, f.publishJSONMessage)
 	ctx.Step(`^within "([^"]*)" messages from "([^"]*)" contain JSON$`, f.assertMessages)
+	ctx.Step(`^within "([^"]*)" messages from "([^"]*)" do not contain JSON$`, f.assertMessagesAbsent)
+	ctx.Step(`^extract "([^"]*)" from message ([1-9][0-9]*) from "([^"]*)" as "([^"]*)"$`, f.extractVariableFromMessage)
+	ctx.Step(`^within "([^"]*)" messages from "([^"]*)" have count ([0-9]+) matching JSON$`, f.assertMessageCount)
 }
 
 func (f *FeaturesContext) mockServerStart() {
@@ -171,50 +174,50 @@ func (f *FeaturesContext) handleMockRequest(w http.ResponseWriter, r *http.Reque
 		writeMockJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "invalid request body"})
 		return
 	}
-		var payload map[string]interface{}
-		if len(body) > 0 {
-			err = json.Unmarshal(body, &payload)
-			if err != nil {
-				log.Println("Error unmarshalling body:", err)
-				writeMockJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "invalid json payload"})
-				return
-			}
+	var payload map[string]interface{}
+	if len(body) > 0 {
+		err = json.Unmarshal(body, &payload)
+		if err != nil {
+			log.Println("Error unmarshalling body:", err)
+			writeMockJSON(w, http.StatusBadRequest, map[string]interface{}{"error": "invalid json payload"})
+			return
 		}
+	}
 
-		headers := make(map[string]string)
-		for key, values := range r.Header {
-			if len(values) > 0 {
-				headers[key] = values[0]
-			}
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
 		}
+	}
 
-		for _, mock := range f.mockRegistry {
-			if method == mock.Method && fullURL == mock.Path {
-				call := MockCall{
-					Method:   method,
-					Path:     fullURL,
-					Status:   mock.Status,
-					Query:    r.URL.Query(),
-					Headers:  headers,
-					Payload:  payload,
-					CalledAt: time.Now().Format(time.RFC3339),
-				}
-				mock.Called = true
-				for key, value := range mock.Headers {
-					w.Header().Set(key, value)
-				}
-				writeMockJSON(w, mock.Status, mock.Response)
-				call.ResponseHeaders = make(map[string]string)
-				for key, values := range w.Header() {
+	for _, mock := range f.mockRegistry {
+		if method == mock.Method && fullURL == mock.Path {
+			call := MockCall{
+				Method:   method,
+				Path:     fullURL,
+				Status:   mock.Status,
+				Query:    r.URL.Query(),
+				Headers:  headers,
+				Payload:  payload,
+				CalledAt: time.Now().Format(time.RFC3339),
+			}
+			mock.Called = true
+			for key, value := range mock.Headers {
+				w.Header().Set(key, value)
+			}
+			writeMockJSON(w, mock.Status, mock.Response)
+			call.ResponseHeaders = make(map[string]string)
+			for key, values := range w.Header() {
 				if len(values) > 0 {
 					call.ResponseHeaders[key] = values[0]
 				}
-				}
-				mock.CallHistory = append(mock.CallHistory, call)
-				return
 			}
+			mock.CallHistory = append(mock.CallHistory, call)
+			return
 		}
-		writeMockJSON(w, http.StatusNotFound, map[string]interface{}{"error": "not found"})
+	}
+	writeMockJSON(w, http.StatusNotFound, map[string]interface{}{"error": "not found"})
 }
 
 func writeMockJSON(w http.ResponseWriter, status int, value interface{}) {

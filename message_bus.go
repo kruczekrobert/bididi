@@ -113,36 +113,13 @@ func (f *FeaturesContext) publishJSONMessage(destination string, body *godog.Doc
 }
 
 func (f *FeaturesContext) assertMessages(timeoutValue, destination string, body *godog.DocString) error {
-	if body == nil {
-		return fmt.Errorf("expected JSON messages require a body DocString")
-	}
-	timeout, err := time.ParseDuration(timeoutValue)
-	if err != nil || timeout <= 0 {
-		return fmt.Errorf("invalid message timeout %q: expected a positive Go duration", timeoutValue)
-	}
-	destination, err = f.resolveMessageDestination(destination)
+	timeout, destination, observer, err := f.prepareMessageAssertion(timeoutValue, destination)
 	if err != nil {
-		return fmt.Errorf("message destination: %w", err)
+		return err
 	}
-	observer, exists := f.messageObservers[destination]
-	if !exists {
-		return fmt.Errorf("messages from %q are not observed; use the observe step before publishing", destination)
-	}
-	processedJSON, err := f.jsonComparator.ProcessWildcardsInJSONString(body.Content)
+	expected, err := f.parseExpectedMessages(body)
 	if err != nil {
-		return fmt.Errorf("resolve expected message JSON: %w", err)
-	}
-	var expected []interface{}
-	if err := json.Unmarshal([]byte(processedJSON), &expected); err != nil {
-		return fmt.Errorf("expected messages must be a JSON array: %w", err)
-	}
-	if len(expected) == 0 {
-		return fmt.Errorf("expected messages must be a non-empty JSON array")
-	}
-	for i, item := range expected {
-		if _, ok := item.(map[string]interface{}); !ok {
-			return fmt.Errorf("expected message %d must be a JSON object", i+1)
-		}
+		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -158,14 +135,159 @@ func (f *FeaturesContext) assertMessages(timeoutValue, destination string, body 
 			}
 			return fmt.Errorf("read messages from %q: %w", destination, err)
 		}
-		if message.ID != "" && hasObservedMessageID(f.observedMessages[destination], message.ID) {
-			continue
-		}
-		message.Data = bytes.Clone(message.Data)
-		observed := observedMessage{message: message}
-		observed.valid = json.Unmarshal(message.Data, &observed.json) == nil
-		f.observedMessages[destination] = append(f.observedMessages[destination], observed)
+		f.bufferObservedMessage(destination, message)
 	}
+}
+
+func (f *FeaturesContext) assertMessagesAbsent(timeoutValue, destination string, body *godog.DocString) error {
+	timeout, destination, observer, err := f.prepareMessageAssertion(timeoutValue, destination)
+	if err != nil {
+		return err
+	}
+	forbidden, err := f.parseExpectedMessages(body)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		if index, pattern, found := f.findMatchingMessage(forbidden, f.observedMessages[destination]); found {
+			return fmt.Errorf("messages from %q contained forbidden JSON message %d at observed message %d: id=%q data=%s", destination, pattern+1, index+1, f.observedMessages[destination][index].message.ID, f.observedMessages[destination][index].message.Data)
+		}
+		message, err := observer.Next(ctx)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil
+			}
+			return fmt.Errorf("read messages from %q: %w", destination, err)
+		}
+		f.bufferObservedMessage(destination, message)
+	}
+}
+
+func (f *FeaturesContext) extractVariableFromMessage(path string, messageNumber int, destination, variableName string) error {
+	destination, err := f.resolveMessageDestination(destination)
+	if err != nil {
+		return fmt.Errorf("message destination: %w", err)
+	}
+	if _, exists := f.messageObservers[destination]; !exists {
+		return fmt.Errorf("messages from %q are not observed; use the observe step before publishing", destination)
+	}
+	if messageNumber < 1 || messageNumber > len(f.observedMessages[destination]) {
+		return fmt.Errorf("message %d from %q is not available; observed messages: %d", messageNumber, destination, len(f.observedMessages[destination]))
+	}
+
+	observed := f.observedMessages[destination][messageNumber-1]
+	if !observed.valid {
+		return fmt.Errorf("message %d from %q is not valid JSON: %s", messageNumber, destination, observed.message.Data)
+	}
+	value, err := f.jsonComparator.extractValueByPath(observed.json, path)
+	if err != nil {
+		return fmt.Errorf("failed to extract value from message %d from %q at path %s: %w%s", messageNumber, destination, path, err, f.wildcardProcessor.GetVariablesDebugInfo())
+	}
+	actualVariableName, typePrefix := f.parseVariableNameWithPrefix(variableName)
+	f.wildcardProcessor.SetVariable(actualVariableName, f.convertValueWithTypePrefix(value, typePrefix))
+	return nil
+}
+
+func (f *FeaturesContext) assertMessageCount(timeoutValue, destination string, expectedCount int, body *godog.DocString) error {
+	if expectedCount < 0 {
+		return fmt.Errorf("expected message count must not be negative")
+	}
+	timeout, destination, observer, err := f.prepareMessageAssertion(timeoutValue, destination)
+	if err != nil {
+		return err
+	}
+	expected, err := f.parseExpectedMessage(body)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		message, err := observer.Next(ctx)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				actualCount := f.matchingMessageCount(expected, f.observedMessages[destination])
+				if actualCount != expectedCount {
+					return fmt.Errorf("messages from %q had count %d matching JSON within %s, expected exactly %d\nMatching JSON:\n%s", destination, actualCount, timeout, expectedCount, body.Content)
+				}
+				return nil
+			}
+			return fmt.Errorf("read messages from %q: %w", destination, err)
+		}
+		f.bufferObservedMessage(destination, message)
+	}
+}
+
+func (f *FeaturesContext) prepareMessageAssertion(timeoutValue, destination string) (time.Duration, string, MessageObserver, error) {
+	timeout, err := time.ParseDuration(timeoutValue)
+	if err != nil || timeout <= 0 {
+		return 0, "", nil, fmt.Errorf("invalid message timeout %q: expected a positive Go duration", timeoutValue)
+	}
+	destination, err = f.resolveMessageDestination(destination)
+	if err != nil {
+		return 0, "", nil, fmt.Errorf("message destination: %w", err)
+	}
+	observer, exists := f.messageObservers[destination]
+	if !exists {
+		return 0, "", nil, fmt.Errorf("messages from %q are not observed; use the observe step before publishing", destination)
+	}
+	return timeout, destination, observer, nil
+}
+
+func (f *FeaturesContext) parseExpectedMessages(body *godog.DocString) ([]interface{}, error) {
+	if body == nil {
+		return nil, fmt.Errorf("expected JSON messages require a body DocString")
+	}
+	processedJSON, err := f.jsonComparator.ProcessWildcardsInJSONString(body.Content)
+	if err != nil {
+		return nil, fmt.Errorf("resolve expected message JSON: %w", err)
+	}
+	var expected []interface{}
+	if err := json.Unmarshal([]byte(processedJSON), &expected); err != nil {
+		return nil, fmt.Errorf("expected messages must be a JSON array: %w", err)
+	}
+	if len(expected) == 0 {
+		return nil, fmt.Errorf("expected messages must be a non-empty JSON array")
+	}
+	for i, item := range expected {
+		if _, ok := item.(map[string]interface{}); !ok {
+			return nil, fmt.Errorf("expected message %d must be a JSON object", i+1)
+		}
+	}
+	return expected, nil
+}
+
+func (f *FeaturesContext) parseExpectedMessage(body *godog.DocString) (interface{}, error) {
+	if body == nil {
+		return nil, fmt.Errorf("expected message JSON requires a body DocString")
+	}
+	processedJSON, err := f.jsonComparator.ProcessWildcardsInJSONString(body.Content)
+	if err != nil {
+		return nil, fmt.Errorf("resolve expected message JSON: %w", err)
+	}
+	var expected interface{}
+	if err := json.Unmarshal([]byte(processedJSON), &expected); err != nil {
+		return nil, fmt.Errorf("expected message must be a JSON object: %w", err)
+	}
+	if _, ok := expected.(map[string]interface{}); !ok {
+		return nil, fmt.Errorf("expected message must be a JSON object")
+	}
+	return expected, nil
+}
+
+func (f *FeaturesContext) bufferObservedMessage(destination string, message Message) bool {
+	if message.ID != "" && hasObservedMessageID(f.observedMessages[destination], message.ID) {
+		return false
+	}
+	message.Data = bytes.Clone(message.Data)
+	observed := observedMessage{message: message}
+	observed.valid = json.Unmarshal(message.Data, &observed.json) == nil
+	f.observedMessages[destination] = append(f.observedMessages[destination], observed)
+	return true
 }
 
 func hasObservedMessageID(messages []observedMessage, id string) bool {
@@ -197,6 +319,30 @@ func (f *FeaturesContext) messagesMatch(expected []interface{}, observed []obser
 		return false
 	}
 	return match(0)
+}
+
+func (f *FeaturesContext) findMatchingMessage(expected []interface{}, observed []observedMessage) (int, int, bool) {
+	for i, message := range observed {
+		if !message.valid {
+			continue
+		}
+		for j, pattern := range expected {
+			if f.matchMessageJSON(pattern, message.json, "") == nil {
+				return i, j, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+func (f *FeaturesContext) matchingMessageCount(expected interface{}, observed []observedMessage) int {
+	count := 0
+	for _, message := range observed {
+		if message.valid && f.matchMessageJSON(expected, message.json, "") == nil {
+			count++
+		}
+	}
+	return count
 }
 
 func (f *FeaturesContext) matchMessageJSON(expected, actual interface{}, path string) error {

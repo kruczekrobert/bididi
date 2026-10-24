@@ -23,7 +23,7 @@ Welcome to the guide for bididi, a reusable set of Godog steps for Go applicatio
 go get github.com/kruczekrobert/bididi
 ```
 
-The root module does not require Gin, GORM, Fx, or a cache client package. To use bididi, register an `http.Handler` and, when needed, implementations of these small interfaces:
+The root module does not require Gin, GORM, Fx, a cache client, or a message broker client package. To use bididi, register an `http.Handler` and, when needed, implementations of these small interfaces for database, cache, and message bus / Pub/Sub integration:
 
 ```go
 type Database interface {
@@ -37,7 +37,24 @@ type Cache interface {
     Get(ctx context.Context, key string) (value string, found bool, err error)
     Set(ctx context.Context, key, value string, ttl time.Duration) error
 }
+
+type MessageBus interface {
+    Publish(ctx context.Context, destination string, data []byte) error
+    Observe(ctx context.Context, destination string) (MessageObserver, error)
+}
+
+type MessageObserver interface {
+    Next(ctx context.Context) (Message, error)
+    Close() error
+}
+
+type Message struct {
+    ID   string
+    Data []byte
+}
 ```
+
+Use `features.RegisterDB(db)`, `features.RegisterCache(cache)`, and `features.RegisterMessageBus(bus)` to enable the corresponding steps. A message bus adapter can connect to GCP Pub/Sub, Redis Streams, or another broker. It handles publishing and observing messages; bididi provides JSON assertions, negative assertions, exact matching counts, and value extraction. See [Message Bus Steps](#-message-bus-steps) for the adapter contract and step syntax.
 
 The complete setup is in [example-app/app_test.go](examples/example-app/app_test.go) and [test-app/app_test.go](tests/test-app/app_test.go). Both applications assemble their handlers with Fx; bididi does not depend on Fx.
 
@@ -540,6 +557,40 @@ Then within "5s" messages from "orders.events" contain JSON
 ```
 
 The DocString must be a non-empty JSON array of objects. The step waits up to the given positive Go duration. Expected objects match distinct observed messages in any order; unrelated messages and extra object fields are allowed. Comparison wildcards and `$VAR(name)$` work in expected JSON. Observed messages stay in the scenario buffer, so later assertions can inspect them again without another read. An unmet assertion reports the messages observed before the timeout. See [message bus scenarios](tests/test-app/features/message_bus_steps.feature) for unordered events, variables, and wildcards.
+
+### Assert that messages are absent
+
+```gherkin
+Then within "500ms" messages from "orders.events" do not contain JSON
+  """
+  [
+    {"type":"PaymentFailed","order_id":"42"}
+  ]
+  """
+```
+
+The DocString has the same non-empty array format and partial-object matching rules as `contain JSON`. A forbidden match fails the step. A successful negative assertion always waits for the complete time window, so an event arriving near the end is not missed.
+
+### Extract from an observed message
+
+```gherkin
+And extract "payload.order_id" from message 1 from "orders.events" as "order_id"
+```
+
+Extraction reads the existing scenario buffer; it does not wait for another message. Message numbers are one-based and follow the order in which `MessageObserver.Next` returned unique messages. The path uses dots for object fields and numeric array indexes. Variable-name prefixes `str:`, `int:`, `float:`, `bool:`, and `auto:` work as they do for response extraction.
+
+### Assert an exact matching count
+
+```gherkin
+Then within "500ms" messages from "orders.events" have count 2 matching JSON
+  """
+  {"type":"OrderCreated"}
+  """
+```
+
+The DocString is one JSON object and uses partial-object matching, variables, and comparison wildcards. The step waits for the complete time window before comparing the exact count, so later duplicates or extra events are detected. Messages with the same non-empty `Message.ID` are counted once; when an adapter cannot provide an ID, each delivery is treated as a separate message.
+
+All message steps share one per-destination scenario buffer. Matching assertions are intentionally order-independent. Only the numbered extraction step depends on observer arrival order, which may differ from publish order when a broker or concurrent consumers do not guarantee ordering.
 
 ## 🃏 Wildcard System
 

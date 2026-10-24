@@ -39,3 +39,31 @@ Feature: Message bus steps
         {"type":"InvoiceRequested","order_id":"$VAR(order_id)$","created_at":"$ANY_STR_FULL$"}
       ]
       """
+
+  Scenario: Reuse observed messages for absence, extraction, and exact count
+    Given observe messages from "orders.events"
+    When publish JSON message to "orders.commands"
+      """
+      {"order_id":"44"}
+      """
+    Then within "1s" messages from "orders.events" contain JSON
+      """
+      [
+        {"type":"InvoiceRequested","order_id":"44"},
+        {"type":"OrderCreated","order_id":"44"}
+      ]
+      """
+    And extract "type" from message 1 from "orders.events" as "first_event_type"
+    And variable "first_event_type" equals "OrderCreated"
+    And extract "order_id" from message 2 from "orders.events" as "str:extracted_order_id"
+    And variable "extracted_order_id" equals "44"
+    And within "30ms" messages from "orders.events" have count 2 matching JSON
+      """
+      {"order_id":"44"}
+      """
+    And within "30ms" messages from "orders.events" do not contain JSON
+      """
+      [
+        {"type":"PaymentFailed","order_id":"44"}
+      ]
+      """
