@@ -47,6 +47,18 @@ func (jc *JSONComparator) CompareJSON(expected, actual string) error {
 func (jc *JSONComparator) compareValues(expected, actual interface{}, path string) error {
 	switch expectedVal := expected.(type) {
 	case string:
+		switch expectedVal {
+		case "$NOT_NULL$":
+			if actual == nil {
+				return fmt.Errorf("expected non-null value at %s, got null", path)
+			}
+			return nil
+		case "$ANY_ARRAY$":
+			if _, ok := actual.([]interface{}); !ok {
+				return fmt.Errorf("expected array at %s, got %T", path, actual)
+			}
+			return nil
+		}
 		if matcher, ok := jc.processor.FindHandlerForWildcard(expectedVal).(WildcardMatcher); ok {
 			return matcher.Match(expectedVal, actual)
 		}
@@ -257,62 +269,22 @@ func (jc *JSONComparator) compareBooleanValue(expected bool, actual interface{},
 
 func (jc *JSONComparator) compareTimeWildcard(expected, actual string, path string) error {
 	now := time.Now()
-
-	if expected == "$NOW$" {
-		actualTime, err := parseWildcardTime(actual)
-		if err != nil {
-			return fmt.Errorf("invalid time format at %s: %v", path, err)
-		}
-
-		diff := now.Sub(actualTime)
-		if diff < 0 {
-			diff = -diff
-		}
-
-		if diff > 1*time.Minute {
-			return fmt.Errorf("time mismatch at %s: expected time within 1 minutes of now, got %s (diff: %v)", path, actual, diff)
-		}
-
-		return nil
+	expectedTime, tolerance, err := expectedTimeAndTolerance(expected, now)
+	if err != nil {
+		return err
 	}
-
-	// Handle $NOW+duration$ or $NOW-duration$
-	re := regexp.MustCompile(`^\$NOW([+-])(.+)\$$`)
-	matches := re.FindStringSubmatch(expected)
-	if len(matches) == 3 {
-		operator := matches[1]
-		durationStr := matches[2]
-
-		duration, err := time.ParseDuration(durationStr)
-		if err != nil {
-			return fmt.Errorf("invalid duration %s: %v", durationStr, err)
-		}
-
-		var expectedTime time.Time
-		if operator == "+" {
-			expectedTime = now.Add(duration)
-		} else {
-			expectedTime = now.Add(-duration)
-		}
-
-		actualTime, err := parseWildcardTime(actual)
-		if err != nil {
-			return fmt.Errorf("invalid time format at %s: %v", path, err)
-		}
-
-		diff := expectedTime.Sub(actualTime)
-		if diff < 0 {
-			diff = -diff
-		}
-
-		if diff > 1*time.Minute {
-			return fmt.Errorf("time mismatch at %s: expected time within 1 minute of %s, got %s (diff: %v)", path, expectedTime.Format(time.RFC3339), actual, diff)
-		}
-
-		return nil
+	actualTime, err := parseWildcardTime(actual)
+	if err != nil {
+		return fmt.Errorf("invalid time format at %s: %v", path, err)
 	}
-
-	return fmt.Errorf("invalid time wildcard format: %s", expected)
+	diff := expectedTime.Sub(actualTime)
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > tolerance {
+		return fmt.Errorf("time mismatch at %s: expected time within %s of %s, got %s (diff: %v)", path, tolerance, expectedTime.Format(time.RFC3339Nano), actual, diff)
+	}
+	return nil
 }
 
 func parseWildcardTime(value string) (time.Time, error) {

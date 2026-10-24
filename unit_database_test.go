@@ -82,7 +82,7 @@ func TestFeaturesContext_MatchesTimeWildcard(t *testing.T) {
 		{
 			name:     "NOW with current time RFC3339",
 			expected: "$NOW$",
-			actual:   now.Format(time.RFC3339),
+			actual:   now.Round(time.Second).Format(time.RFC3339),
 			result:   true,
 		},
 		{
@@ -94,13 +94,13 @@ func TestFeaturesContext_MatchesTimeWildcard(t *testing.T) {
 		{
 			name:     "NOW with database timestamp format",
 			expected: "$NOW$",
-			actual:   now.Format("2006-01-02 15:04:05"),
+			actual:   now.Round(time.Second).Format("2006-01-02 15:04:05"),
 			result:   true,
 		},
 		{
 			name:     "NOW with ISO format",
 			expected: "$NOW$",
-			actual:   now.UTC().Format("2006-01-02T15:04:05Z"),
+			actual:   now.UTC().Round(time.Second).Format("2006-01-02T15:04:05Z"),
 			result:   true,
 		},
 		{
@@ -110,33 +110,51 @@ func TestFeaturesContext_MatchesTimeWildcard(t *testing.T) {
 			result:   true,
 		},
 		{
-			name:     "NOW with time 1 minute ago",
+			name:     "NOW within the default one second tolerance",
 			expected: "$NOW$",
-			actual:   now.Add(-59 * time.Second).Format(time.RFC3339),
+			actual:   now.Add(-500 * time.Millisecond).Format(time.RFC3339Nano),
 			result:   true,
 		},
 		{
-			name:     "NOW with time 2 minutes ago",
+			name:     "NOW outside the default one second tolerance",
 			expected: "$NOW$",
-			actual:   now.Add(61 * time.Second).Format(time.RFC3339),
+			actual:   now.Add(-1500 * time.Millisecond).Format(time.RFC3339Nano),
 			result:   false,
 		},
 		{
 			name:     "NOW+1h with correct time",
 			expected: "$NOW+1h$",
-			actual:   now.Add(time.Hour).Format(time.RFC3339),
+			actual:   now.Add(time.Hour).Round(time.Second).Format(time.RFC3339),
 			result:   true,
 		},
 		{
 			name:     "NOW-30m with correct time",
 			expected: "$NOW-30m$",
-			actual:   now.Add(-30 * time.Minute).Format(time.RFC3339),
+			actual:   now.Add(-30 * time.Minute).Round(time.Second).Format(time.RFC3339),
 			result:   true,
 		},
 		{
 			name:     "NOW+1h with wrong time",
 			expected: "$NOW+1h$",
 			actual:   now.Add(2 * time.Hour).Format(time.RFC3339),
+			result:   false,
+		},
+		{
+			name:     "NOW plus offset with explicit tolerance",
+			expected: "$NOW+1h_WITHIN(10s)$",
+			actual:   now.Add(time.Hour + 9*time.Second).Format(time.RFC3339Nano),
+			result:   true,
+		},
+		{
+			name:     "NOW minus offset with explicit tolerance",
+			expected: "$NOW-30m_WITHIN(2s)$",
+			actual:   now.Add(-30*time.Minute - time.Second).Format(time.RFC3339Nano),
+			result:   true,
+		},
+		{
+			name:     "NOW plus offset outside explicit tolerance",
+			expected: "$NOW+1h_WITHIN(10s)$",
+			actual:   now.Add(time.Hour + 11*time.Second).Format(time.RFC3339Nano),
 			result:   false,
 		},
 		{
@@ -169,8 +187,8 @@ func TestFeaturesContext_MatchesTimeWildcardWithLocalOffset(t *testing.T) {
 	f := &FeaturesContext{}
 	now := time.Now()
 	const layout = "2006-01-02 15:04:05"
-	assert.True(t, f.matchesTimeWildcard("$NOW+1h$", now.Add(time.Hour).Format(layout)))
-	assert.True(t, f.matchesTimeWildcard("$NOW-30m$", now.Add(-30*time.Minute).Format(layout)))
+	assert.True(t, f.matchesTimeWildcard("$NOW+1h$", now.Add(time.Hour).Round(time.Second).Format(layout)))
+	assert.True(t, f.matchesTimeWildcard("$NOW-30m$", now.Add(-30*time.Minute).Round(time.Second).Format(layout)))
 }
 
 func TestFeaturesContext_MatchesPartialRecordWithDetails(t *testing.T) {

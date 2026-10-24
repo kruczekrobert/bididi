@@ -204,6 +204,17 @@ func TestWildcardProcessor_ProcessWildcards(t *testing.T) {
 	}
 }
 
+func TestComparisonOnlyWildcardsAreRejectedDuringGeneration(t *testing.T) {
+	processor := NewWildcardProcessor()
+
+	for _, wildcard := range []string{"$NOT_NULL$", "$ANY_ARRAY$", "$NOW_WITHIN(5s)$", "$NOW+1h_WITHIN(10s)$"} {
+		t.Run(wildcard, func(t *testing.T) {
+			_, err := processor.SubstituteWildcards(wildcard)
+			assert.Error(t, err)
+		})
+	}
+}
+
 func TestWildcardProcessor_NonStringMapKey(t *testing.T) {
 	processor := NewWildcardProcessor()
 	processor.SetVariable("key", 42)

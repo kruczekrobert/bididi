@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,24 +35,48 @@ func (g gormDatabase) Count(table string) (int64, error) {
 }
 
 type memoryCache struct {
+	mu       sync.Mutex
 	values   map[string]string
 	ttlByKey map[string]time.Duration
+	expires  map[string]time.Time
 }
 
 func (m *memoryCache) Exists(_ context.Context, key string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deleteExpired(key)
 	_, ok := m.values[key]
 	return ok, nil
 }
 
 func (m *memoryCache) Get(_ context.Context, key string) (string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deleteExpired(key)
 	value, ok := m.values[key]
 	return value, ok, nil
 }
 
 func (m *memoryCache) Set(_ context.Context, key, value string, ttl time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.values[key] = value
 	m.ttlByKey[key] = ttl
+	if ttl > 0 {
+		m.expires[key] = time.Now().Add(ttl)
+	} else {
+		delete(m.expires, key)
+	}
 	return nil
+}
+
+func (m *memoryCache) deleteExpired(key string) {
+	expiresAt, ok := m.expires[key]
+	if !ok || time.Now().Before(expiresAt) {
+		return
+	}
+	delete(m.values, key)
+	delete(m.expires, key)
 }
 
 type testWildcard struct{}
@@ -100,6 +125,7 @@ func TestFeature(t *testing.T) {
 	cache := &memoryCache{
 		values:   make(map[string]string),
 		ttlByKey: make(map[string]time.Duration),
+		expires:  make(map[string]time.Time),
 	}
 	features.RegisterCache(cache)
 	bus := newMemoryMessageBus()
@@ -133,11 +159,14 @@ func TestFeature(t *testing.T) {
 	features.RegisterApp(handler)
 
 	suite := godog.TestSuite{
-		Name:                "test-app",
+		Name: "test-app",
 		ScenarioInitializer: func(scenario *godog.ScenarioContext) {
 			scenario.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
+				cache.mu.Lock()
+				defer cache.mu.Unlock()
 				cache.values = make(map[string]string)
 				cache.ttlByKey = make(map[string]time.Duration)
+				cache.expires = make(map[string]time.Time)
 				return ctx, nil
 			})
 			features.InitializeScenario(scenario)
@@ -146,7 +175,9 @@ func TestFeature(t *testing.T) {
 				if err != nil {
 					return err
 				}
+				cache.mu.Lock()
 				actual, ok := cache.ttlByKey[key]
+				cache.mu.Unlock()
 				if !ok {
 					return fmt.Errorf("cache mock did not record key %q", key)
 				}

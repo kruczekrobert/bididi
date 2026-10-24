@@ -17,6 +17,14 @@ Feature: Basic database steps
       | 1  | Ada  |
     And have "1" records in "step_items" table
 
+  Scenario: Wait for an expected database record
+    Given add "step_items" records
+      | id | name |
+      | 7  | Ada  |
+    Then within "100ms" have "step_items" records
+      | id | name |
+      | 7  | Ada  |
+
   Scenario: Execute SQL changes the table
     Given add "step_items" records
       | id | name |

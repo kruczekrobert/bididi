@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cucumber/godog"
@@ -71,6 +72,7 @@ type FeaturesContext struct {
 	messageBus        MessageBus
 	messageObservers  map[string]MessageObserver
 	observedMessages  map[string][]observedMessage
+	mockMu            sync.RWMutex
 	mockRegistry      map[string]*MockConfig
 	wildcardProcessor *WildcardProcessor
 	jsonComparator    *JSONComparator
@@ -82,7 +84,9 @@ func (f *FeaturesContext) clear(ctx context.Context, _ *godog.Scenario) (context
 	}
 	f.apiApp = nil
 	f.apiResponse = nil
+	f.mockMu.Lock()
 	f.mockRegistry = make(map[string]*MockConfig)
+	f.mockMu.Unlock()
 	f.wildcardProcessor.ClearVariables()
 	return ctx, nil
 }
@@ -97,6 +101,7 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 	// sql
 	ctx.Step(`^add "([^"]*)" records$`, f.addRecords)
 	ctx.Step(`^have "([^"]*)" records$`, f.haveRecords)
+	ctx.Step(`^within "([^"]*)" have "([^"]*)" records$`, f.haveRecordsWithin)
 	ctx.Step(`^have empty "([^"]*)" table$`, f.haveEmptyTable)
 	ctx.Step(`^have "([^"]*)" records in "([^"]*)" table$`, f.haveRecordsCount)
 	ctx.Step(`^execute SQL "([^"]*)"$`, f.executeRawSQL)
@@ -135,11 +140,17 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 		return f.assertMockCallFromTable(name, status, table, body)
 	})
 	ctx.Step(`^json mock "([^"]*)" was not called$`, f.jsonMockWasNotCalled)
+	ctx.Step(`^within "([^"]*)" json mock "([^"]*)" was called$`, f.jsonMockWasCalledWithin)
+	ctx.Step(`^within "([^"]*)" json mock "([^"]*)" was called ([0-9]+) times$`, f.jsonMockWasCalledCountWithin)
+	ctx.Step(`^for "([^"]*)" json mock "([^"]*)" was not called$`, f.jsonMockWasNotCalledFor)
 
 	// Cache steps
 	ctx.Step(`^cache key "([^"]*)" exists$`, f.assertCacheKeyExists)
 	ctx.Step(`^cache key "([^"]*)" does not exist$`, f.assertCacheKeyDoesNotExists)
 	ctx.Step(`^have cache key "([^"]*)" with JSON$`, f.assertCacheValueJson)
+	ctx.Step(`^within "([^"]*)" cache key "([^"]*)" exists$`, f.assertCacheKeyExistsWithin)
+	ctx.Step(`^within "([^"]*)" cache key "([^"]*)" does not exist$`, f.assertCacheKeyDoesNotExistWithin)
+	ctx.Step(`^within "([^"]*)" have cache key "([^"]*)" with JSON$`, f.assertCacheValueJSONWithin)
 	ctx.Step(`^have cache key "([^"]*)" with string$`, f.assertCacheValueString)
 	ctx.Step(`^set cache key "([^"]*)" to$`, f.setCacheValue)
 	ctx.Step(`^set cache key "([^"]*)" to JSON$`, f.setCacheJSONValue)
@@ -150,8 +161,10 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^observe messages from "([^"]*)"$`, f.observeMessages)
 	ctx.Step(`^publish JSON message to "([^"]*)"$`, f.publishJSONMessage)
 	ctx.Step(`^within "([^"]*)" messages from "([^"]*)" contain JSON$`, f.assertMessages)
+	ctx.Step(`^within "([^"]*)" messages from "([^"]*)" contain JSON in order$`, f.assertMessagesInOrder)
 	ctx.Step(`^within "([^"]*)" messages from "([^"]*)" do not contain JSON$`, f.assertMessagesAbsent)
 	ctx.Step(`^extract "([^"]*)" from message ([1-9][0-9]*) from "([^"]*)" as "([^"]*)"$`, f.extractVariableFromMessage)
+	ctx.Step(`^within "([^"]*)" extract "([^"]*)" from first message from "([^"]*)" matching JSON as "([^"]*)"$`, f.extractVariableFromMatchingMessage)
 	ctx.Step(`^within "([^"]*)" messages from "([^"]*)" have count ([0-9]+) matching JSON$`, f.assertMessageCount)
 }
 
@@ -191,6 +204,7 @@ func (f *FeaturesContext) handleMockRequest(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	f.mockMu.Lock()
 	for _, mock := range f.mockRegistry {
 		if method == mock.Method && fullURL == mock.Path {
 			call := MockCall{
@@ -202,21 +216,28 @@ func (f *FeaturesContext) handleMockRequest(w http.ResponseWriter, r *http.Reque
 				Payload:  payload,
 				CalledAt: time.Now().Format(time.RFC3339),
 			}
-			mock.Called = true
 			for key, value := range mock.Headers {
 				w.Header().Set(key, value)
 			}
-			writeMockJSON(w, mock.Status, mock.Response)
+			if w.Header().Get("Content-Type") == "" {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			}
 			call.ResponseHeaders = make(map[string]string)
 			for key, values := range w.Header() {
 				if len(values) > 0 {
 					call.ResponseHeaders[key] = values[0]
 				}
 			}
+			mock.Called = true
 			mock.CallHistory = append(mock.CallHistory, call)
+			status := mock.Status
+			response := mock.Response
+			f.mockMu.Unlock()
+			writeMockJSON(w, status, response)
 			return
 		}
 	}
+	f.mockMu.Unlock()
 	writeMockJSON(w, http.StatusNotFound, map[string]interface{}{"error": "not found"})
 }
 

@@ -94,12 +94,16 @@ func (f *FeaturesContext) registerMockConfig(name string, mockConfig MockConfig)
 
 	mockConfig.CallHistory = make([]MockCall, 0)
 
+	f.mockMu.Lock()
+	defer f.mockMu.Unlock()
 	f.mockRegistry[name] = &mockConfig
 
 	return nil
 }
 
 func (f *FeaturesContext) jsonMockWasCalled(name string) error {
+	f.mockMu.RLock()
+	defer f.mockMu.RUnlock()
 	if f.mockRegistry == nil {
 		return fmt.Errorf("[1820392040] mock registry not initialized")
 	}
@@ -117,6 +121,8 @@ func (f *FeaturesContext) jsonMockWasCalled(name string) error {
 }
 
 func (f *FeaturesContext) jsonMockWasNotCalled(name string) error {
+	f.mockMu.RLock()
+	defer f.mockMu.RUnlock()
 	if f.mockRegistry == nil {
 		return fmt.Errorf("[1953435344] mock registry not initialized")
 	}
@@ -132,7 +138,65 @@ func (f *FeaturesContext) jsonMockWasNotCalled(name string) error {
 	return nil
 }
 
+func (f *FeaturesContext) jsonMockWasCalledWithin(timeoutValue, name string) error {
+	if err := f.ensureMockExists(name); err != nil {
+		return err
+	}
+	return waitForAssertion(timeoutValue, fmt.Sprintf("json mock %q to be called", name), func() error {
+		return f.jsonMockWasCalled(name)
+	})
+}
+
+func (f *FeaturesContext) jsonMockWasCalledCountWithin(timeoutValue, name string, expectedCount int) error {
+	if err := f.ensureMockExists(name); err != nil {
+		return err
+	}
+	return waitForAssertion(timeoutValue, fmt.Sprintf("json mock %q to be called %d times", name, expectedCount), func() error {
+		actualCount, err := f.mockCallCount(name)
+		if err != nil {
+			return err
+		}
+		if actualCount != expectedCount {
+			return fmt.Errorf("json mock %q was called %d times, expected %d", name, actualCount, expectedCount)
+		}
+		return nil
+	})
+}
+
+func (f *FeaturesContext) jsonMockWasNotCalledFor(durationValue, name string) error {
+	if err := f.ensureMockExists(name); err != nil {
+		return err
+	}
+	return assertForDuration(durationValue, fmt.Sprintf("json mock %q to not be called", name), func() error {
+		return f.jsonMockWasNotCalled(name)
+	})
+}
+
+func (f *FeaturesContext) ensureMockExists(name string) error {
+	f.mockMu.RLock()
+	defer f.mockMu.RUnlock()
+	if f.mockRegistry == nil {
+		return fmt.Errorf("mock registry not initialized")
+	}
+	if _, ok := f.mockRegistry[name]; !ok {
+		return fmt.Errorf("no mock %q in registry", name)
+	}
+	return nil
+}
+
+func (f *FeaturesContext) mockCallCount(name string) (int, error) {
+	f.mockMu.RLock()
+	defer f.mockMu.RUnlock()
+	mock, ok := f.mockRegistry[name]
+	if !ok {
+		return 0, fmt.Errorf("no mock %q in registry", name)
+	}
+	return len(mock.CallHistory), nil
+}
+
 func (f *FeaturesContext) assertMockCall(name string, expected MockExpectation, expectedText string) error {
+	f.mockMu.RLock()
+	defer f.mockMu.RUnlock()
 	mock, ok := f.mockRegistry[name]
 	if !ok {
 		return fmt.Errorf("mock '%s' not found in registry", name)

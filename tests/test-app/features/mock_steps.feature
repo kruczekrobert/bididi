@@ -124,3 +124,20 @@ Feature: HTTP mock steps
     Then json mock "notification" was called
       | type   | name         | value            |
       | header | Content-Type | application/json |
+
+  Scenario: Wait for a mock and its exact call count
+    Given json mock "billing" for "POST" request to "events" with status 200
+      """
+      {"accepted":true}
+      """
+    When make a "POST" request to "/items/42/notify"
+    And make a "POST" request to "/items/43/notify"
+    Then within "100ms" json mock "billing" was called
+    And within "100ms" json mock "billing" was called 2 times
+
+  Scenario: A mock remains uncalled for the complete window
+    Given json mock "refund" for "POST" request to "refunds" with status 200
+      """
+      {"accepted":true}
+      """
+    Then for "30ms" json mock "refund" was not called

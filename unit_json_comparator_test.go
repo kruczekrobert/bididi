@@ -67,13 +67,13 @@ func TestJSONComparator_CompareJSON(t *testing.T) {
 		{
 			name:        "JSON with NOW wildcard",
 			expected:    `{"timestamp": "$NOW$"}`,
-			actual:      `{"timestamp": "` + time.Now().Format(time.RFC3339) + `"}`,
+			actual:      `{"timestamp": "` + time.Now().Format(time.RFC3339Nano) + `"}`,
 			shouldError: false,
 		},
 		{
 			name:        "JSON with NOW plus duration and local timestamp",
 			expected:    `{"timestamp": "$NOW+1h$"}`,
-			actual:      `{"timestamp": "` + time.Now().Add(time.Hour).Format("2006-01-02 15:04:05") + `"}`,
+			actual:      `{"timestamp": "` + time.Now().Add(time.Hour).Round(time.Second).Format("2006-01-02 15:04:05") + `"}`,
 			shouldError: false,
 		},
 		{
@@ -159,7 +159,7 @@ func TestJSONComparator_CompareJSON(t *testing.T) {
 			actual: `{
 				"batch_id": "550e8400-e29b-41d4-a716-446655440000",
 				"user_id": "123",
-				"processed_at": "` + time.Now().Format(time.RFC3339) + `",
+				"processed_at": "` + time.Now().Format(time.RFC3339Nano) + `",
 				"items": [
 					{"id": "550e8400-e29b-41d4-a716-446655440001", "amount": 100.50},
 					{"id": "550e8400-e29b-41d4-a716-446655440002", "amount": 200.75}
@@ -532,4 +532,54 @@ func TestJSONComparator_WildcardEdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJSONComparator_NotNullAnyArrayAndNowWithinWildcards(t *testing.T) {
+	comparator := NewJSONComparator(NewWildcardProcessor())
+
+	require.NoError(t, comparator.CompareJSON(
+		`{"value":"$NOT_NULL$"}`,
+		`{"value":{"nested":true}}`,
+	))
+	require.ErrorContains(t, comparator.CompareJSON(
+		`{"value":"$NOT_NULL$"}`,
+		`{"value":null}`,
+	), "expected non-null value")
+
+	require.NoError(t, comparator.CompareJSON(
+		`{"value":"$ANY_ARRAY$"}`,
+		`{"value":[1,"two",null]}`,
+	))
+	require.ErrorContains(t, comparator.CompareJSON(
+		`{"value":"$ANY_ARRAY$"}`,
+		`{"value":{"not":"an array"}}`,
+	), "expected array")
+
+	// $ANY$ already accepts arrays and every other JSON type, including null.
+	require.NoError(t, comparator.CompareJSON(
+		`{"value":"$ANY$"}`,
+		`{"value":[1,2,3]}`,
+	))
+
+	require.NoError(t, comparator.CompareJSON(
+		`{"created_at":"$NOW_WITHIN(2s)$"}`,
+		`{"created_at":"`+time.Now().Add(-500*time.Millisecond).Format(time.RFC3339Nano)+`"}`,
+	))
+	require.ErrorContains(t, comparator.CompareJSON(
+		`{"created_at":"$NOW_WITHIN(100ms)$"}`,
+		`{"created_at":"`+time.Now().Add(-time.Second).Format(time.RFC3339Nano)+`"}`,
+	), "time mismatch")
+	require.ErrorContains(t, comparator.CompareJSON(
+		`{"created_at":"$NOW_WITHIN(invalid)$"}`,
+		`{"created_at":"`+time.Now().Format(time.RFC3339Nano)+`"}`,
+	), "invalid time tolerance")
+
+	require.NoError(t, comparator.CompareJSON(
+		`{"scheduled_at":"$NOW+1h_WITHIN(10s)$"}`,
+		`{"scheduled_at":"`+time.Now().Add(time.Hour+9*time.Second).Format(time.RFC3339Nano)+`"}`,
+	))
+	require.ErrorContains(t, comparator.CompareJSON(
+		`{"scheduled_at":"$NOW+1h_WITHIN(10s)$"}`,
+		`{"scheduled_at":"`+time.Now().Add(time.Hour+11*time.Second).Format(time.RFC3339Nano)+`"}`,
+	), "time mismatch")
 }

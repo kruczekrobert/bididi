@@ -139,6 +139,33 @@ func (f *FeaturesContext) assertMessages(timeoutValue, destination string, body 
 	}
 }
 
+func (f *FeaturesContext) assertMessagesInOrder(timeoutValue, destination string, body *godog.DocString) error {
+	timeout, destination, observer, err := f.prepareMessageAssertion(timeoutValue, destination)
+	if err != nil {
+		return err
+	}
+	expected, err := f.parseExpectedMessages(body)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		if f.messagesMatchInOrder(expected, f.observedMessages[destination]) {
+			return nil
+		}
+		message, err := observer.Next(ctx)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return f.messageOrderMismatchError(destination, timeout, body.Content)
+			}
+			return fmt.Errorf("read messages from %q: %w", destination, err)
+		}
+		f.bufferObservedMessage(destination, message)
+	}
+}
+
 func (f *FeaturesContext) assertMessagesAbsent(timeoutValue, destination string, body *godog.DocString) error {
 	timeout, destination, observer, err := f.prepareMessageAssertion(timeoutValue, destination)
 	if err != nil {
@@ -178,7 +205,39 @@ func (f *FeaturesContext) extractVariableFromMessage(path string, messageNumber 
 		return fmt.Errorf("message %d from %q is not available; observed messages: %d", messageNumber, destination, len(f.observedMessages[destination]))
 	}
 
-	observed := f.observedMessages[destination][messageNumber-1]
+	return f.extractVariableFromObservedMessage(path, messageNumber-1, destination, variableName)
+}
+
+func (f *FeaturesContext) extractVariableFromMatchingMessage(timeoutValue, path, destination, variableName string, body *godog.DocString) error {
+	timeout, destination, observer, err := f.prepareMessageAssertion(timeoutValue, destination)
+	if err != nil {
+		return err
+	}
+	expected, err := f.parseExpectedMessage(body)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for {
+		if index, found := f.findFirstMatchingObservedMessage(expected, f.observedMessages[destination]); found {
+			return f.extractVariableFromObservedMessage(path, index, destination, variableName)
+		}
+		message, err := observer.Next(ctx)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return f.matchingMessageExtractionError(destination, timeout, body.Content, path)
+			}
+			return fmt.Errorf("read messages from %q: %w", destination, err)
+		}
+		f.bufferObservedMessage(destination, message)
+	}
+}
+
+func (f *FeaturesContext) extractVariableFromObservedMessage(path string, index int, destination, variableName string) error {
+	messageNumber := index + 1
+	observed := f.observedMessages[destination][index]
 	if !observed.valid {
 		return fmt.Errorf("message %d from %q is not valid JSON: %s", messageNumber, destination, observed.message.Data)
 	}
@@ -321,6 +380,29 @@ func (f *FeaturesContext) messagesMatch(expected []interface{}, observed []obser
 	return match(0)
 }
 
+func (f *FeaturesContext) messagesMatchInOrder(expected []interface{}, observed []observedMessage) bool {
+	expectedIndex := 0
+	for _, message := range observed {
+		if !message.valid || f.matchMessageJSON(expected[expectedIndex], message.json, "") != nil {
+			continue
+		}
+		expectedIndex++
+		if expectedIndex == len(expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *FeaturesContext) findFirstMatchingObservedMessage(expected interface{}, observed []observedMessage) (int, bool) {
+	for i, message := range observed {
+		if message.valid && f.matchMessageJSON(expected, message.json, "") == nil {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 func (f *FeaturesContext) findMatchingMessage(expected []interface{}, observed []observedMessage) (int, int, bool) {
 	for i, message := range observed {
 		if !message.valid {
@@ -376,4 +458,27 @@ func (f *FeaturesContext) messageMismatchError(destination string, timeout time.
 		fmt.Fprintf(&result, "\n  id=%q data=%s", observed.message.ID, observed.message.Data)
 	}
 	return errors.New(result.String())
+}
+
+func (f *FeaturesContext) messageOrderMismatchError(destination string, timeout time.Duration, expected string) error {
+	var result strings.Builder
+	fmt.Fprintf(&result, "messages from %q did not contain the expected JSON messages in order within %s\nExpected ordered JSON messages:\n%s\nObserved messages (%d):", destination, timeout, expected, len(f.observedMessages[destination]))
+	f.appendObservedMessages(&result, destination)
+	return errors.New(result.String())
+}
+
+func (f *FeaturesContext) matchingMessageExtractionError(destination string, timeout time.Duration, expected, path string) error {
+	var result strings.Builder
+	fmt.Fprintf(&result, "no message from %q matching JSON was available within %s for extraction at path %q\nMatching JSON:\n%s\nObserved messages (%d):", destination, timeout, path, expected, len(f.observedMessages[destination]))
+	f.appendObservedMessages(&result, destination)
+	return errors.New(result.String())
+}
+
+func (f *FeaturesContext) appendObservedMessages(result *strings.Builder, destination string) {
+	if len(f.observedMessages[destination]) == 0 {
+		result.WriteString(" none")
+	}
+	for _, observed := range f.observedMessages[destination] {
+		fmt.Fprintf(result, "\n  id=%q data=%s", observed.message.ID, observed.message.Data)
+	}
 }

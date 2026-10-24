@@ -3,7 +3,6 @@ package bdd
 import (
 	"fmt"
 	"github.com/cucumber/godog"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -208,6 +207,12 @@ func (f *FeaturesContext) haveRecords(tableName string, data *godog.Table) error
 	return nil
 }
 
+func (f *FeaturesContext) haveRecordsWithin(timeoutValue, tableName string, data *godog.Table) error {
+	return waitForAssertion(timeoutValue, fmt.Sprintf("table %q to contain the expected records", tableName), func() error {
+		return f.haveRecords(tableName, data)
+	})
+}
+
 func (f *FeaturesContext) matchDistinctRecords(expected, actual []map[string]interface{}) bool {
 	used := make([]bool, len(actual))
 	var match func(int) bool
@@ -350,6 +355,16 @@ func (f *FeaturesContext) matchesPartialRecordWithDetails(expected, actual map[s
 		switch expectedStr {
 		case "$ANY$":
 			continue
+		case "$NOT_NULL$":
+			if actualValue == nil {
+				errors = append(errors, fmt.Sprintf("Field '%s': expected non-null value but got NULL", key))
+			}
+			continue
+		case "$ANY_ARRAY$":
+			if _, ok := actualValue.([]interface{}); !ok {
+				errors = append(errors, fmt.Sprintf("Field '%s': expected array type but got %v (%T)", key, actualValue, actualValue))
+			}
+			continue
 		case "$ANY_STR$":
 			if _, ok := actualValue.(string); !ok {
 				errors = append(errors, fmt.Sprintf("📝 Field '%s': expected string type but got %v (%T)", key, actualValue, actualValue))
@@ -411,55 +426,19 @@ func (f *FeaturesContext) matchesUUIDWildcard(actual string) bool {
 
 func (f *FeaturesContext) matchesTimeWildcard(expected, actual string) bool {
 	now := time.Now()
-
-	// Handle $NOW$ - check if actual time is within 1 minute of now
-	if expected == "$NOW$" {
-		actualTime, err := parseWildcardTime(actual)
-		if err != nil {
-			return false
-		}
-
-		diff := now.Sub(actualTime)
-		if diff < 0 {
-			diff = -diff
-		}
-
-		return diff <= 1*time.Minute
+	expectedTime, tolerance, err := expectedTimeAndTolerance(expected, now)
+	if err != nil {
+		return false
 	}
-
-	// Handle $NOW+duration$ or $NOW-duration$
-	re := regexp.MustCompile(`^\$NOW([+-])(.+)\$$`)
-	matches := re.FindStringSubmatch(expected)
-	if len(matches) == 3 {
-		operator := matches[1]
-		durationStr := matches[2]
-
-		duration, err := time.ParseDuration(durationStr)
-		if err != nil {
-			return false
-		}
-
-		var expectedTime time.Time
-		if operator == "+" {
-			expectedTime = now.Add(duration)
-		} else {
-			expectedTime = now.Add(-duration)
-		}
-
-		actualTime, err := parseWildcardTime(actual)
-		if err != nil {
-			return false
-		}
-
-		diff := expectedTime.Sub(actualTime)
-		if diff < 0 {
-			diff = -diff
-		}
-
-		return diff <= time.Minute
+	actualTime, err := parseWildcardTime(actual)
+	if err != nil {
+		return false
 	}
-
-	return false
+	diff := expectedTime.Sub(actualTime)
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= tolerance
 }
 
 // Supports type prefixes in variable name: str:varname, int:varname, float:varname, bool:varname, auto:varname

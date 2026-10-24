@@ -79,6 +79,18 @@ func (f *FeaturesContext) assertCacheKeyDoesNotExists(key string) error {
 	return nil
 }
 
+func (f *FeaturesContext) assertCacheKeyExistsWithin(timeoutValue, key string) error {
+	return waitForAssertion(timeoutValue, fmt.Sprintf("cache key %q to exist", key), func() error {
+		return f.assertCacheKeyExists(key)
+	})
+}
+
+func (f *FeaturesContext) assertCacheKeyDoesNotExistWithin(timeoutValue, key string) error {
+	return waitForAssertion(timeoutValue, fmt.Sprintf("cache key %q to not exist", key), func() error {
+		return f.assertCacheKeyDoesNotExists(key)
+	})
+}
+
 func (f *FeaturesContext) assertCacheValueJson(key string, expectedJSON *godog.DocString) error {
 	if f.cache == nil {
 		return fmt.Errorf("cache not configured")
@@ -109,6 +121,12 @@ func (f *FeaturesContext) assertCacheValueJson(key string, expectedJSON *godog.D
 	}
 
 	return nil
+}
+
+func (f *FeaturesContext) assertCacheValueJSONWithin(timeoutValue, key string, expectedJSON *godog.DocString) error {
+	return waitForAssertion(timeoutValue, fmt.Sprintf("cache key %q to contain the expected JSON", key), func() error {
+		return f.assertCacheValueJson(key, expectedJSON)
+	})
 }
 
 func (f *FeaturesContext) assertCacheValueString(key string, expectedValue *godog.DocString) error {

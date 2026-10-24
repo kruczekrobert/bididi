@@ -67,3 +67,37 @@ Feature: Message bus steps
         {"type":"PaymentFailed","order_id":"44"}
       ]
       """
+
+  Scenario: Match published events in arrival order
+    Given observe messages from "orders.events"
+    When publish JSON message to "orders.events"
+      """
+      {"type":"Unrelated","order_id":"another"}
+      """
+    And publish JSON message to "orders.commands"
+      """
+      {"order_id":"45"}
+      """
+    Then within "1s" messages from "orders.events" contain JSON in order
+      """
+      [
+        {"type":"OrderCreated","order_id":"45"},
+        {"type":"InvoiceRequested","order_id":"45"}
+      ]
+      """
+
+  Scenario: Wait for a matching message and extract from it
+    Given observe messages from "orders.events"
+    When publish JSON message to "orders.events"
+      """
+      {"type":"Unrelated","order_id":"wrong"}
+      """
+    And publish JSON message to "orders.commands"
+      """
+      {"order_id":"46"}
+      """
+    Then within "1s" extract "order_id" from first message from "orders.events" matching JSON as "str:extracted_order_id"
+      """
+      {"type":"OrderCreated","order_id":"46"}
+      """
+    And variable "extracted_order_id" equals "46"

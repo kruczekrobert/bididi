@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cucumber/godog"
 	"github.com/stretchr/testify/assert"
@@ -134,4 +136,54 @@ func TestMockCalledAndNotCalled(t *testing.T) {
 	require.Error(t, f.jsonMockWasCalled("unused"))
 	require.Error(t, f.jsonMockWasNotCalled("called"))
 	require.Error(t, f.jsonMockWasCalled("missing"))
+}
+
+func TestMockEventuallyCalledAndExactCount(t *testing.T) {
+	f := New()
+	require.NoError(t, f.jsonMockFromTable("billing", "POST", "charges", "200", nil, &godog.DocString{Content: `{}`}))
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		f.handleMockRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/mocks/charges", nil))
+		time.Sleep(20 * time.Millisecond)
+		f.handleMockRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/mocks/charges", nil))
+	}()
+
+	require.NoError(t, f.jsonMockWasCalledWithin("200ms", "billing"))
+	require.NoError(t, f.jsonMockWasCalledCountWithin("200ms", "billing", 2))
+}
+
+func TestMockNotCalledForChecksTheWholeWindow(t *testing.T) {
+	f := New()
+	require.NoError(t, f.jsonMockFromTable("refund", "POST", "refunds", "200", nil, &godog.DocString{Content: `{}`}))
+
+	started := time.Now()
+	require.NoError(t, f.jsonMockWasNotCalledFor("30ms", "refund"))
+	assert.GreaterOrEqual(t, time.Since(started), 20*time.Millisecond)
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		f.handleMockRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/mocks/refunds", nil))
+	}()
+	require.ErrorContains(t, f.jsonMockWasNotCalledFor("200ms", "refund"), "did not remain true")
+}
+
+func TestMockCallHistorySupportsConcurrentRequests(t *testing.T) {
+	f := New()
+	require.NoError(t, f.jsonMockFromTable("billing", "POST", "charges", "200", nil, &godog.DocString{Content: `{}`}))
+
+	const calls = 20
+	var group sync.WaitGroup
+	group.Add(calls)
+	for i := 0; i < calls; i++ {
+		go func() {
+			defer group.Done()
+			f.handleMockRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/mocks/charges", nil))
+		}()
+	}
+	group.Wait()
+
+	actual, err := f.mockCallCount("billing")
+	require.NoError(t, err)
+	assert.Equal(t, calls, actual)
 }

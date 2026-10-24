@@ -105,3 +105,69 @@ func TestAssertMessageCountReportsTheExactCount(t *testing.T) {
 	require.ErrorContains(t, err, `had count 1 matching JSON`)
 	require.ErrorContains(t, err, `expected exactly 2`)
 }
+
+func TestAssertMessagesInOrderAllowsUnrelatedMessages(t *testing.T) {
+	f, _ := newTestMessageContext(
+		Message{ID: "1", Data: []byte(`{"type":"Unrelated"}`)},
+		Message{ID: "2", Data: []byte(`{"type":"OrderCreated","order_id":"42"}`)},
+		Message{ID: "3", Data: []byte(`{"type":"AuditRecorded"}`)},
+		Message{ID: "4", Data: []byte(`{"type":"InvoiceRequested","order_id":"42"}`)},
+	)
+
+	err := f.assertMessagesInOrder("100ms", "events", &godog.DocString{Content: `[
+      {"type":"OrderCreated","order_id":"42"},
+      {"type":"InvoiceRequested","order_id":"42"}
+    ]`})
+
+	require.NoError(t, err)
+	assert.Len(t, f.observedMessages["events"], 4)
+}
+
+func TestAssertMessagesInOrderRejectsReversedEvents(t *testing.T) {
+	f, _ := newTestMessageContext(
+		Message{ID: "1", Data: []byte(`{"type":"InvoiceRequested","order_id":"42"}`)},
+		Message{ID: "2", Data: []byte(`{"type":"OrderCreated","order_id":"42"}`)},
+	)
+
+	err := f.assertMessagesInOrder("20ms", "events", &godog.DocString{Content: `[
+      {"type":"OrderCreated","order_id":"42"},
+      {"type":"InvoiceRequested","order_id":"42"}
+    ]`})
+
+	require.ErrorContains(t, err, "did not contain the expected JSON messages in order")
+}
+
+func TestExtractVariableFromFirstMatchingMessageWaitsAndIgnoresUnrelatedMessages(t *testing.T) {
+	f, _ := newTestMessageContext(
+		Message{ID: "1", Data: []byte(`{"type":"Unrelated","payload":{"order_id":"wrong"}}`)},
+		Message{ID: "2", Data: []byte(`{"type":"OrderCreated","correlation_id":"trace-42","payload":{"order_id":"42"}}`)},
+	)
+	f.wildcardProcessor.SetVariable("correlation_id", "trace-42")
+
+	err := f.extractVariableFromMatchingMessage(
+		"100ms",
+		"payload.order_id",
+		"events",
+		"str:order_id",
+		&godog.DocString{Content: `{"type":"OrderCreated","correlation_id":"$VAR(correlation_id)$"}`},
+	)
+
+	require.NoError(t, err)
+	value, exists := f.wildcardProcessor.GetVariable("order_id")
+	require.True(t, exists)
+	assert.Equal(t, "42", value)
+}
+
+func TestExtractVariableFromFirstMatchingMessageReportsTimeout(t *testing.T) {
+	f, _ := newTestMessageContext(Message{ID: "1", Data: []byte(`{"type":"Unrelated"}`)})
+
+	err := f.extractVariableFromMatchingMessage(
+		"20ms",
+		"payload.order_id",
+		"events",
+		"order_id",
+		&godog.DocString{Content: `{"type":"OrderCreated"}`},
+	)
+
+	require.ErrorContains(t, err, `no message from "events" matching JSON was available`)
+}

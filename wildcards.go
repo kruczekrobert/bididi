@@ -17,6 +17,14 @@ const (
 	ContextComparison Context = "comparison" // For keeping wildcards as placeholders
 )
 
+const defaultTimeWildcardTolerance = time.Second
+
+var (
+	nowOffsetPattern       = regexp.MustCompile(`^\$NOW([+-])([^$]+)\$$`)
+	nowWithinPattern       = regexp.MustCompile(`^\$NOW_WITHIN\(([^)]+)\)\$$`)
+	nowOffsetWithinPattern = regexp.MustCompile(`^\$NOW([+-])(.+)_WITHIN\(([^)]+)\)\$$`)
+)
+
 type WildcardHandler interface {
 	CanHandle(wildcard string) bool
 	Process(wildcard string, context Context) (interface{}, error)
@@ -138,23 +146,28 @@ func NewTimeHandler() *TimeHandler {
 }
 
 func (th *TimeHandler) CanHandle(wildcard string) bool {
-	return wildcard == "$NOW$" || regexp.MustCompile(`^\$NOW[+-][^$]+\$$`).MatchString(wildcard)
+	return wildcard == "$NOW$" ||
+		nowOffsetPattern.MatchString(wildcard) ||
+		nowWithinPattern.MatchString(wildcard) ||
+		nowOffsetWithinPattern.MatchString(wildcard)
 }
 
 func (th *TimeHandler) Process(wildcard string, context Context) (interface{}, error) {
 	if context == ContextComparison {
 		return wildcard, nil
 	}
+	if nowWithinPattern.MatchString(wildcard) || nowOffsetWithinPattern.MatchString(wildcard) {
+		return wildcard, fmt.Errorf("time wildcards with _WITHIN(duration) are only supported for comparisons/validation, not for data generation")
+	}
 
 	now := time.Now()
 
 	if wildcard == "$NOW$" {
-		return now.Format(time.RFC3339), nil
+		return now.Format(time.RFC3339Nano), nil
 	}
 
 	// Handle $NOW+duration$ or $NOW-duration$
-	re := regexp.MustCompile(`^\$NOW([+-])(.+)\$$`)
-	matches := re.FindStringSubmatch(wildcard)
+	matches := nowOffsetPattern.FindStringSubmatch(wildcard)
 	if len(matches) == 3 {
 		operator := matches[1]
 		durationStr := matches[2]
@@ -165,13 +178,55 @@ func (th *TimeHandler) Process(wildcard string, context Context) (interface{}, e
 		}
 
 		if operator == "+" {
-			return now.Add(duration).Format(time.RFC3339), nil
+			return now.Add(duration).Format(time.RFC3339Nano), nil
 		} else {
-			return now.Add(-duration).Format(time.RFC3339), nil
+			return now.Add(-duration).Format(time.RFC3339Nano), nil
 		}
 	}
 
 	return wildcard, nil
+}
+
+func expectedTimeAndTolerance(wildcard string, now time.Time) (time.Time, time.Duration, error) {
+	if wildcard == "$NOW$" {
+		return now, defaultTimeWildcardTolerance, nil
+	}
+	if matches := nowWithinPattern.FindStringSubmatch(wildcard); len(matches) == 2 {
+		tolerance, err := positiveTimeTolerance(matches[1])
+		return now, tolerance, err
+	}
+	if matches := nowOffsetWithinPattern.FindStringSubmatch(wildcard); len(matches) == 4 {
+		expected, err := applyTimeOffset(now, matches[1], matches[2])
+		if err != nil {
+			return time.Time{}, 0, err
+		}
+		tolerance, err := positiveTimeTolerance(matches[3])
+		return expected, tolerance, err
+	}
+	if matches := nowOffsetPattern.FindStringSubmatch(wildcard); len(matches) == 3 {
+		expected, err := applyTimeOffset(now, matches[1], matches[2])
+		return expected, defaultTimeWildcardTolerance, err
+	}
+	return time.Time{}, 0, fmt.Errorf("invalid time wildcard format: %s", wildcard)
+}
+
+func applyTimeOffset(now time.Time, operator, value string) (time.Time, error) {
+	offset, err := time.ParseDuration(value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid time offset %q: %w", value, err)
+	}
+	if operator == "+" {
+		return now.Add(offset), nil
+	}
+	return now.Add(-offset), nil
+}
+
+func positiveTimeTolerance(value string) (time.Duration, error) {
+	tolerance, err := time.ParseDuration(value)
+	if err != nil || tolerance <= 0 {
+		return 0, fmt.Errorf("invalid time tolerance %q: expected a positive Go duration", value)
+	}
+	return tolerance, nil
 }
 
 func (th *TimeHandler) ShouldBeQuotedInJSON(wildcard string, processedValue interface{}) bool {
@@ -225,7 +280,7 @@ func NewGenericHandler() *GenericHandler {
 
 func (gh *GenericHandler) CanHandle(wildcard string) bool {
 	switch wildcard {
-	case "$ANY$", "$ANY_STR$", "$ANY_STR_FULL$", "$ANY_INT$", "$ANY_FLOAT$", "$ANY_BOOL$":
+	case "$ANY$", "$ANY_STR$", "$ANY_STR_FULL$", "$ANY_INT$", "$ANY_FLOAT$", "$ANY_BOOL$", "$ANY_ARRAY$", "$NOT_NULL$":
 		return true
 	default:
 		return false
@@ -238,8 +293,8 @@ func (gh *GenericHandler) Process(wildcard string, context Context) (interface{}
 	}
 
 	switch wildcard {
-	case "$ANY$", "$ANY_STR$", "$ANY_STR_FULL$", "$ANY_INT$", "$ANY_FLOAT$", "$ANY_BOOL$":
-		return wildcard, fmt.Errorf("$ANY* wildcards are only supported for comparisons/validation, not for data generation")
+	case "$ANY$", "$ANY_STR$", "$ANY_STR_FULL$", "$ANY_INT$", "$ANY_FLOAT$", "$ANY_BOOL$", "$ANY_ARRAY$", "$NOT_NULL$":
+		return wildcard, fmt.Errorf("comparison wildcards are only supported for comparisons/validation, not for data generation")
 	}
 
 	return wildcard, nil
@@ -273,6 +328,7 @@ func NewWildcardProcessor() *WildcardProcessor {
 			regexp.MustCompile(`\$NOW[^$]*\$`),
 			regexp.MustCompile(`\$UUID\$`),
 			regexp.MustCompile(`\$ANY[^$]*\$`),
+			regexp.MustCompile(`\$NOT_NULL\$`),
 			regexp.MustCompile(`\$NULL\$`),
 		},
 	}

@@ -48,6 +48,24 @@ Feature: Cache steps with an in-memory client
       """
     And cache mock recorded TTL "2m" for key "temporary-json"
 
+  Scenario: Wait for a cache key and its JSON value
+    Given set cache key "order:42" to JSON
+      """
+      {"status":"completed"}
+      """
+    Then within "100ms" cache key "order:42" exists
+    And within "100ms" have cache key "order:42" with JSON
+      """
+      {"status":"completed"}
+      """
+
+  Scenario: Wait for a cache key to expire
+    Given set cache key "lock:42" with TTL "30ms" to
+      """
+      locked
+      """
+    Then within "500ms" cache key "lock:42" does not exist
+
   Scenario: An unknown key does not exist
     Then cache key "never-created" does not exist
 
