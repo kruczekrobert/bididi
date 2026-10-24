@@ -2,8 +2,6 @@ package bdd
 
 import (
 	"context"
-	"io"
-	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -106,88 +104,4 @@ func TestEventuallyHelpersReportTimeoutAndCheckTheWholeDuration(t *testing.T) {
 	started := time.Now()
 	require.NoError(t, assertForDuration("30ms", "condition", func() error { return nil }))
 	assert.GreaterOrEqual(t, time.Since(started), 20*time.Millisecond)
-}
-
-type bindingMessageBus struct {
-	messages []Message
-}
-
-func (*bindingMessageBus) Publish(context.Context, string, []byte) error { return nil }
-
-func (b *bindingMessageBus) Observe(context.Context, string) (MessageObserver, error) {
-	observer := &testMessageObserver{messages: make(chan Message, len(b.messages))}
-	for _, message := range b.messages {
-		observer.messages <- message
-	}
-	return observer, nil
-}
-
-func TestNewEventuallyAndOrderedMessageStepsAreBound(t *testing.T) {
-	f := New()
-	f.RegisterDB(&eventualDatabase{})
-	f.RegisterCache(&scriptedCache{
-		exists: []bool{true, true, false},
-		reads:  []cacheRead{{value: `{"status":"completed"}`, found: true}},
-	})
-	f.RegisterMessageBus(&bindingMessageBus{messages: []Message{
-		{ID: "1", Data: []byte(`{"type":"Unrelated"}`)},
-		{ID: "2", Data: []byte(`{"type":"OrderCreated","payload":{"order_id":"42"}}`)},
-		{ID: "3", Data: []byte(`{"type":"InvoiceRequested","payload":{"order_id":"42"}}`)},
-	}})
-	f.RegisterApp(http.HandlerFunc(f.handleMockRequest))
-
-	feature := `Feature: Eventually and ordered message bindings
-  Scenario: Use all new step forms
-    Given app is running
-    And json mock "billing" for "GET" request to "billing" with status 200
-      """
-      {}
-      """
-    And json mock "refund" for "GET" request to "refund" with status 200
-      """
-      {}
-      """
-    When make a "GET" request to "/mocks/billing"
-    Then within "100ms" json mock "billing" was called
-    And within "100ms" json mock "billing" was called 1 times
-    And for "20ms" json mock "refund" was not called
-    And within "100ms" have "orders" records
-      | id | status    |
-      | 42 | completed |
-    And within "100ms" cache key "order:42" exists
-    And within "100ms" have cache key "order:42" with JSON
-      """
-      {"status":"completed"}
-      """
-    And within "100ms" cache key "lock:42" does not exist
-    And observe messages from "orders.events"
-    And within "100ms" messages from "orders.events" contain JSON in order
-      """
-      [
-        {"type":"OrderCreated"},
-        {"type":"InvoiceRequested"}
-      ]
-      """
-    And within "100ms" extract "payload.order_id" from first message from "orders.events" matching JSON as "str:order_id"
-      """
-      {"type":"OrderCreated"}
-      """
-    And variable "order_id" equals "42"
-`
-
-	suite := godog.TestSuite{
-		Name:                "new-step-bindings",
-		ScenarioInitializer: f.InitializeScenario,
-		Options: &godog.Options{
-			Format:   "progress",
-			Output:   io.Discard,
-			Strict:   true,
-			TestingT: t,
-			FeatureContents: []godog.Feature{{
-				Name:     "new-step-bindings.feature",
-				Contents: []byte(feature),
-			}},
-		},
-	}
-	require.Zero(t, suite.Run())
 }

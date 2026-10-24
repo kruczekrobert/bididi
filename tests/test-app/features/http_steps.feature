@@ -53,6 +53,20 @@ Feature: Basic HTTP steps
       {"payload":{"count":2},"trace":"combined"}
       """
 
+  Scenario: A request DocString can precede its metadata table
+    When make a "POST" request to "/echo"
+      """
+      {"count":2}
+      """
+      | type   | name    | value    |
+      | header | X-Trace | combined |
+    Then have JSON response with status 200
+      """
+      {"payload":{"count":2},"trace":"combined"}
+      """
+      | type   | name         | value                           |
+      | header | Content-Type | application/json; charset=utf-8 |
+
   Scenario: A variable resolves in the request path
     Given set variable "item_id" to "str:42"
     When make a "GET" request to "/items/$VAR(item_id)$"

@@ -141,3 +141,24 @@ Feature: HTTP mock steps
       {"accepted":true}
       """
     Then for "30ms" json mock "refund" was not called
+
+  Scenario: JSON can precede the metadata table
+    Given json mock "notification" for "POST" request to "events" with status 200
+      """
+      {"accepted":true}
+      """
+      | type            | name   | value     |
+      | response-header | X-Mock | from-mock |
+    When make a "POST" request to "/items/42/notify"
+    Then have JSON response with status 200
+      """
+      {"item":{"id":"42","name":"Ada"},"notification":{"accepted":true},"mock_header":"from-mock"}
+      """
+      | type   | name         | value            |
+      | header | Content-Type | application/json |
+    And json mock "notification" was called
+      """
+      {"id":"42","name":"Ada"}
+      """
+      | type   | name         | value            |
+      | header | Content-Type | application/json |
