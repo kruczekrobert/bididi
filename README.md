@@ -277,6 +277,14 @@ Then have "step_items" records
 
 Checks the listed fields. Each expected row must match a distinct database row; additional database fields are allowed.
 
+For effects produced asynchronously, add a timeout. The assertion is retried until it succeeds or the positive Go duration expires:
+
+```gherkin
+Then within "5s" have "orders" records
+  | id | status    |
+  | 42 | completed |
+```
+
 ### Verify Table is Empty
 
 ```gherkin
@@ -349,6 +357,21 @@ Then json mock "unused" was not called
 ```
 
 Declare `unused` first; assertions refer to named mocks already in the registry.
+
+To prove that an asynchronous action does not call a mock during an entire window, use `for`:
+
+```gherkin
+Then for "500ms" json mock "refund" was not called
+```
+
+### Wait for Mock Calls
+
+```gherkin
+Then within "3s" json mock "billing" was called
+And within "3s" json mock "billing" was called 2 times
+```
+
+Both steps retry until the condition becomes true or the positive Go duration expires. The count step succeeds as soon as the current call count equals the expected count. Mock call history is safe to read while the application is making concurrent requests.
 
 ### Verify Mock Was Called With Specific Data
 
@@ -507,7 +530,22 @@ Then have cache key "profile" with JSON
   """
 ```
 
-See [cache scenarios](tests/test-app/features/cache_steps.feature) for all eight steps, TTL propagation, scenario isolation, outlines, and custom wildcards.
+### Wait for Cache State
+
+Use `within` when a worker updates Redis or another cache asynchronously. The assertion is retried until it succeeds or the positive Go duration expires:
+
+```gherkin
+Then within "2s" cache key "order:42" exists
+And within "2s" have cache key "order:42" with JSON
+  """
+  {"status":"completed"}
+  """
+And within "5s" cache key "lock:42" does not exist
+```
+
+`does not exist` means that the key must become absent before the timeout; it may succeed immediately if the key is already absent.
+
+See [cache scenarios](tests/test-app/features/cache_steps.feature) for cache setup, waiting, TTL propagation, scenario isolation, outlines, and custom wildcards.
 
 ## 📨 Message Bus Steps
 
@@ -558,6 +596,20 @@ Then within "5s" messages from "orders.events" contain JSON
 
 The DocString must be a non-empty JSON array of objects. The step waits up to the given positive Go duration. Expected objects match distinct observed messages in any order; unrelated messages and extra object fields are allowed. Comparison wildcards and `$VAR(name)$` work in expected JSON. Observed messages stay in the scenario buffer, so later assertions can inspect them again without another read. An unmet assertion reports the messages observed before the timeout. See [message bus scenarios](tests/test-app/features/message_bus_steps.feature) for unordered events, variables, and wildcards.
 
+### Assert published messages in order
+
+```gherkin
+Then within "5s" messages from "orders.events" contain JSON in order
+  """
+  [
+    {"type":"OrderCreated","order_id":"42"},
+    {"type":"InvoiceRequested","order_id":"42"}
+  ]
+  """
+```
+
+The expected objects must form an ordered subsequence of unique observed messages. Unrelated messages may occur before, between, or after them. Matching remains partial, so extra object fields are allowed.
+
 ### Assert that messages are absent
 
 ```gherkin
@@ -578,6 +630,20 @@ And extract "payload.order_id" from message 1 from "orders.events" as "order_id"
 ```
 
 Extraction reads the existing scenario buffer; it does not wait for another message. Message numbers are one-based and follow the order in which `MessageObserver.Next` returned unique messages. The path uses dots for object fields and numeric array indexes. Variable-name prefixes `str:`, `int:`, `float:`, `bool:`, and `auto:` work as they do for response extraction.
+
+To wait for a specific message and avoid relying on its arrival number, match it by partial JSON and extract from the first matching unique message:
+
+```gherkin
+Then within "5s" extract "payload.order_id" from first message from "orders.events" matching JSON as "str:order_id"
+  """
+  {
+    "type":"OrderCreated",
+    "correlation_id":"$VAR(correlation_id)$"
+  }
+  """
+```
+
+The step checks the existing scenario buffer first and then reads until a match is found or the timeout expires.
 
 ### Assert an exact matching count
 
@@ -610,9 +676,11 @@ Wildcards generate input data or validate output data, depending on the step:
 
 ### Time Wildcards
 
-- `$NOW$` — current timestamp.
-- `$NOW+1h$` — current timestamp plus a Go duration.
-- `$NOW-30m$` — current timestamp minus a Go duration.
+- `$NOW$` — current timestamp; comparisons allow a default tolerance of ±1 second.
+- `$NOW+1h$` — current timestamp plus a Go duration; comparisons allow a default tolerance of ±1 second around the shifted time.
+- `$NOW-30m$` — current timestamp minus a Go duration; comparisons allow a default tolerance of ±1 second around the shifted time.
+- `$NOW_WITHIN(5s)$` — comparison-only wildcard requiring the timestamp to be within the given positive Go duration of now.
+- `$NOW+1h_WITHIN(10s)$` — comparison-only wildcard requiring the timestamp to be within ±10 seconds of now plus one hour. Negative offsets use the same form, for example `$NOW-30m_WITHIN(2s)$`.
 
 ### Generic Wildcards (assertions only)
 
@@ -622,6 +690,8 @@ Wildcards generate input data or validate output data, depending on the step:
 - `$ANY_INT$` — integer.
 - `$ANY_FLOAT$` — numeric value.
 - `$ANY_BOOL$` — boolean.
+- `$ANY_ARRAY$` — any JSON array, including an empty array. `$ANY$` already accepts arrays as well as every other JSON type.
+- `$NOT_NULL$` — any non-null JSON value.
 
 ### Custom Wildcards
 
