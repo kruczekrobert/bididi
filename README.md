@@ -291,6 +291,12 @@ Then within "5s" have "orders" records
 Then have empty "step_items" table
 ```
 
+To wait for the table to become empty:
+
+```gherkin
+Then within "5s" have empty "step_items" table
+```
+
 ### Verify Record Count
 
 ```gherkin
@@ -298,6 +304,15 @@ Then have "2" records in "step_items" table
 ```
 
 The quoted count can also be `$VAR(expected_count)$`.
+
+To wait for the expected count:
+
+```gherkin
+Then within "5s" have "2" records in "step_items" table
+Then within "5s" have "$VAR(expected_count)$" records in "step_items" table
+```
+
+Both `within` steps check immediately, then retry every 10 ms until the assertion succeeds or the timeout expires. The timeout must be a positive Go duration, such as `100ms` or `5s`. On timeout, the error includes the last assertion failure. Success means the condition was observed once; it does not have to remain true for the whole timeout.
 
 ### Execute Raw SQL
 

@@ -25,6 +25,22 @@ Feature: Basic database steps
       | id | name |
       | 7  | Ada  |
 
+  Scenario: Wait for the expected record count
+    Given set variable "expected_count" to "int:2"
+    And add "step_items" records
+      | id | name |
+      | 1  | Ada  |
+      | 2  | Bob  |
+    Then within "100ms" have "2" records in "step_items" table
+    And within "100ms" have "$VAR(expected_count)$" records in "step_items" table
+
+  Scenario: Wait for an empty table
+    Given add "step_items" records
+      | id | name |
+      | 1  | Ada  |
+    When execute SQL "DELETE FROM step_items WHERE id = 1"
+    Then within "100ms" have empty "step_items" table
+
   Scenario: Execute SQL changes the table
     Given add "step_items" records
       | id | name |

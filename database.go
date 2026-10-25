@@ -242,6 +242,16 @@ func (f *FeaturesContext) haveEmptyTable(tableName string) error {
 	return f.haveRecordsCount("0", tableName)
 }
 
+func (f *FeaturesContext) haveEmptyTableWithin(timeoutValue, tableName string) error {
+	return f.haveRecordsCountWithin(timeoutValue, "0", tableName)
+}
+
+func (f *FeaturesContext) haveRecordsCountWithin(timeoutValue, expectedCount, tableName string) error {
+	return waitForAssertion(timeoutValue, fmt.Sprintf("table %q to have %s records", tableName, expectedCount), func() error {
+		return f.haveRecordsCount(expectedCount, tableName)
+	})
+}
+
 func (f *FeaturesContext) haveRecordsCount(expectedCount string, tableName string) error {
 	if f.db == nil {
 		return fmt.Errorf("database not initialized")

@@ -13,6 +13,8 @@ import (
 
 type eventualDatabase struct {
 	queryCalls int
+	counts     []int64
+	countCalls int
 }
 
 func (d *eventualDatabase) Exec(string, ...interface{}) error { return nil }
@@ -25,7 +27,13 @@ func (d *eventualDatabase) Query(string, ...interface{}) ([]map[string]interface
 	return []map[string]interface{}{{"id": "42", "status": "completed"}}, nil
 }
 
-func (d *eventualDatabase) Count(string) (int64, error) { return 0, nil }
+func (d *eventualDatabase) Count(string) (int64, error) {
+	d.countCalls++
+	if len(d.counts) == 0 {
+		return 0, nil
+	}
+	return d.counts[min(d.countCalls-1, len(d.counts)-1)], nil
+}
 
 type cacheRead struct {
 	value string
@@ -69,6 +77,67 @@ func TestHaveRecordsWithinRetriesUntilRowsMatch(t *testing.T) {
 
 	require.NoError(t, f.haveRecordsWithin("100ms", "orders", records))
 	assert.GreaterOrEqual(t, db.queryCalls, 3)
+}
+
+func TestHaveRecordsCountWithinRetriesAndResolvesVariables(t *testing.T) {
+	f := New()
+	db := &eventualDatabase{counts: []int64{0, 1, 2}}
+	f.RegisterDB(db)
+	require.NoError(t, f.setVariable("expected_count", "int:2"))
+
+	require.NoError(t, f.haveRecordsCountWithin("100ms", "$VAR(expected_count)$", "orders"))
+	assert.Equal(t, 3, db.countCalls)
+}
+
+func TestHaveEmptyTableWithinRetriesUntilEmpty(t *testing.T) {
+	f := New()
+	db := &eventualDatabase{counts: []int64{2, 1, 0}}
+	f.RegisterDB(db)
+
+	require.NoError(t, f.haveEmptyTableWithin("100ms", "orders"))
+	assert.Equal(t, 3, db.countCalls)
+}
+
+func TestDatabaseCountWithinStepsReportTimeoutAndRejectInvalidDurations(t *testing.T) {
+	tests := []struct {
+		name      string
+		assert    func(*FeaturesContext, string) error
+		lastError string
+	}{
+		{
+			name: "count",
+			assert: func(f *FeaturesContext, timeout string) error {
+				return f.haveRecordsCountWithin(timeout, "2", "orders")
+			},
+			lastError: "table orders has 1 records, expected 2",
+		},
+		{
+			name: "empty",
+			assert: func(f *FeaturesContext, timeout string) error {
+				return f.haveEmptyTableWithin(timeout, "orders")
+			},
+			lastError: "table orders has 1 records, expected 0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := New()
+			db := &eventualDatabase{counts: []int64{1}}
+			f.RegisterDB(db)
+
+			err := tt.assert(f, "20ms")
+			require.ErrorContains(t, err, "did not become true within 20ms")
+			assert.ErrorContains(t, err, tt.lastError)
+			assert.GreaterOrEqual(t, db.countCalls, 2)
+
+			for _, timeout := range []string{"invalid", "0s", "-1s"} {
+				calls := db.countCalls
+				require.ErrorContains(t, tt.assert(f, timeout), "expected a positive Go duration")
+				assert.Equal(t, calls, db.countCalls)
+			}
+		})
+	}
 }
 
 func TestCacheWithinStepsRetryExistsJSONAndDisappearance(t *testing.T) {

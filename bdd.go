@@ -103,7 +103,9 @@ func (f *FeaturesContext) InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^have "([^"]*)" records$`, f.haveRecords)
 	ctx.Step(`^within "([^"]*)" have "([^"]*)" records$`, f.haveRecordsWithin)
 	ctx.Step(`^have empty "([^"]*)" table$`, f.haveEmptyTable)
+	ctx.Step(`^within "([^"]*)" have empty "([^"]*)" table$`, f.haveEmptyTableWithin)
 	ctx.Step(`^have "([^"]*)" records in "([^"]*)" table$`, f.haveRecordsCount)
+	ctx.Step(`^within "([^"]*)" have "([^"]*)" records in "([^"]*)" table$`, f.haveRecordsCountWithin)
 	ctx.Step(`^execute SQL "([^"]*)"$`, f.executeRawSQL)
 
 	// vars
