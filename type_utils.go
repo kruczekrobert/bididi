@@ -33,6 +33,7 @@ func ToFloat64(v interface{}) (float64, error) {
 	}
 }
 
+// IsInteger reports whether v holds a signed or unsigned integer value.
 func IsInteger(v interface{}) bool {
 	switch v.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
@@ -42,6 +43,7 @@ func IsInteger(v interface{}) bool {
 	}
 }
 
+// IsFloat reports whether v holds a float32 or float64 value.
 func IsFloat(v interface{}) bool {
 	switch v.(type) {
 	case float32, float64:
@@ -51,6 +53,7 @@ func IsFloat(v interface{}) bool {
 	}
 }
 
+// IsNumeric reports whether v holds an integer or floating point value.
 func IsNumeric(v interface{}) bool {
 	return IsInteger(v) || IsFloat(v)
 }
